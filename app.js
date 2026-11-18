@@ -10,6 +10,7 @@ const params = new URLSearchParams(location.search);
 /* ---------------- trạng thái ---------------- */
 let token = null, tokenExp = 0, tokenClient = null, me = null;
 let src = null;            // nguồn dữ liệu: Drive hoặc local (?local=URL để thử)
+let origReady = null;
 let board = null, index = null, notes = {}, myNotesFileId = null;
 let view = { x: 40, y: 40, s: 0.1 };
 const world = $("#world"), vp = $("#viewport");
@@ -123,6 +124,17 @@ function DriveSource(rootId) {
       if (!r.files.length) return null;
       return (textCache[docId] = await (await gfetch(`${API}/${r.files[0].id}?alt=media&supportsAllDrives=true`)).json());
     },
+    async pdfData(p, onProg) {
+      await (origReady || Promise.resolve());
+      if (!paths[p]) throw new Error("Chưa thấy file gốc trên Drive: " + p);
+      const r = await gfetch(`${API}/${paths[p]}?alt=media&supportsAllDrives=true`);
+      const total = +r.headers.get("content-length") || 0;
+      if (!r.body || !total) return r.arrayBuffer();
+      const rd = r.body.getReader(), chunks = []; let got = 0;
+      for (;;) { const { done, value } = await rd.read(); if (done) break; chunks.push(value); got += value.length; onProg && onProg(got, total); }
+      const out = new Uint8Array(got); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; }
+      return out.buffer;
+    },
     openUrl(p) { const id = paths[p]; return id ? `https://drive.google.com/file/d/${id}/view` : null; },
     async loadNotes() {
       const nf = paths["_BOARD/notes/"]; if (!nf) return {};
@@ -162,6 +174,7 @@ function LocalSource(base) {
     kind: "local", async init() {}, async indexOriginals() {}, has: () => true,
     async json(p) { return (await fetch(base + enc(p))).json(); },
     async blobUrl(p) { return base + enc(p); },
+    async pdfData(p) { return (await fetch(base + enc(p))).arrayBuffer(); },
     async text(id) { return textCache[id] || (textCache[id] = await (await fetch(base + "_BOARD/text/" + id + ".json")).json()); },
     openUrl(p) { return base + enc(p); },
     async loadNotes() { try { return JSON.parse(localStorage.getItem("pb_notes") || "{}"); } catch (e) { return {}; } },
@@ -183,7 +196,8 @@ async function openBoard() {
   fitAll();
   status(`Đã mở: ${Object.keys(board.docs).length} tài liệu, ${board.items.filter((i) => i.type === "page").length} trang`);
   src.json("_BOARD/index.json").then((d) => { index = d.pages; index.forEach((p) => { p.text = p.text.normalize("NFC"); p.n = normC(p.text); }); $("#q").placeholder = `Tìm trong ${index.length} trang… (Ctrl+F)`; }).catch(() => status("Chưa có index.json – không tìm kiếm được", 5000));
-  src.indexOriginals().then(() => document.querySelectorAll(".lnk").forEach((e) => e.classList.toggle("nf", !src.has(e.dataset.path))));
+  origReady = src.indexOriginals();
+  origReady.then(() => document.querySelectorAll(".lnk").forEach((e) => e.classList.toggle("nf", !src.has(e.dataset.path))));
   src.loadNotes().then((n) => { notes = n; renderNotes(); }).catch((e) => console.warn(e));
 }
 
@@ -257,6 +271,7 @@ function trim() {
 }
 function updateImages() {
   if (!board) return;
+  scheduleHi();
   const W = vp.clientWidth, H = vp.clientHeight, m = 300;
   queue.length = 0;
   for (const p of pageEls) {
@@ -269,6 +284,66 @@ function updateImages() {
     const path = want === 2 ? it.src : it.thumb;
     loadImg(path, (u) => { if (p.level < want) { p.img.src = u; p.level = want; } });
   }
+}
+
+/* ---------------- PDF gốc: vẽ lại nét khi phóng to ---------------- */
+const pdfDocs = new Map(), pdfFail = new Set();
+if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js?v=3";
+function getPdf(docId) {
+  if (pdfDocs.has(docId)) { const e = pdfDocs.get(docId); pdfDocs.delete(docId); pdfDocs.set(docId, e); return e.promise; }
+  const d = board.docs[docId];
+  const promise = (async () => {
+    status(`Đang tải file gốc: ${d.name} …`, 0);
+    try {
+      const buf = await src.pdfData(d.path, (g, t) => status(`Đang tải file gốc: ${d.name} – ${Math.round(g / 1048576)}/${Math.round(t / 1048576)} MB`, 0));
+      const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
+      status("Đã tải xong: " + d.name, 1500);
+      return pdf;
+    } catch (e) { pdfFail.add(docId); pdfDocs.delete(docId); status("Không mở được file gốc " + d.name + ": " + e.message, 6000); throw e; }
+  })();
+  pdfDocs.set(docId, { promise });
+  while (pdfDocs.size > 3) { const k = pdfDocs.keys().next().value; const e = pdfDocs.get(k); pdfDocs.delete(k); e.promise.then((p) => p.destroy()).catch(() => {}); }
+  return promise;
+}
+function dropHi(p) { if (p.canvas) { p.canvas.remove(); p.canvas = null; } p.hiW = 0; p.job = 0; }
+let hiTimer, jobSeq = 0, hiBusy = false;
+function scheduleHi() { clearTimeout(hiTimer); hiTimer = setTimeout(doHi, 300); }
+async function doHi() {
+  if (!board || !window.pdfjsLib) return;
+  if (hiBusy) { scheduleHi(); return; }
+  const W = vp.clientWidth, H = vp.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cands = [];
+  for (const p of pageEls) {
+    const it = p.it, d = board.docs[it.doc];
+    if (d.kind !== "pdf" || pdfFail.has(it.doc)) continue;
+    const sx = it.x * view.s + view.x, sy = it.y * view.s + view.y, sw = it.w * view.s, sh = it.h * view.s;
+    const vw = Math.min(sx + sw, W) - Math.max(sx, 0), vh = Math.min(sy + sh, H) - Math.max(sy, 0);
+    if (vw <= 0 || vh <= 0 || sw < 650) { if (p.canvas) dropHi(p); continue; }
+    cands.push({ p, sw, area: vw * vh });
+  }
+  cands.sort((a, b) => b.area - a.area);
+  hiBusy = true;
+  try {
+    for (const { p, sw } of cands.slice(0, 3)) {
+      const it = p.it, need = Math.min(sw * dpr, 7000);
+      if (p.hiW && p.hiW >= need * 0.85) continue;
+      const job = (p.job = ++jobSeq);
+      let pdf, page;
+      try { pdf = await getPdf(it.doc); page = await pdf.getPage(it.page); } catch (e) { continue; }
+      const v0 = page.getViewport({ scale: 1 });
+      const scale = Math.min(need / v0.width, 7000 / Math.max(v0.width, v0.height));
+      let v = page.getViewport({ scale });
+      const maxPx = 36e6; if (v.width * v.height > maxPx) v = page.getViewport({ scale: scale * Math.sqrt(maxPx / (v.width * v.height)) });
+      const cv = document.createElement("canvas"); cv.width = Math.floor(v.width); cv.height = Math.floor(v.height);
+      const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: ctx, viewport: v }).promise;
+      if (p.job !== job) continue; // đã có yêu cầu mới hơn
+      cv.style.cssText = "position:absolute;left:0;top:0;width:100%;height:100%;display:block";
+      if (p.canvas) p.canvas.remove();
+      p.el.insertBefore(cv, p.img.nextSibling); p.canvas = cv; p.hiW = cv.width;
+    }
+  } catch (e) { console.warn("hi-res:", e); }
+  hiBusy = false;
 }
 
 /* ---------------- điều hướng ---------------- */
