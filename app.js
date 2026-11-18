@@ -17,6 +17,13 @@ const pageEls = [];        // {it, el, img, level}
 let tool = "select";
 
 /* ---------------- tiện ích ---------------- */
+function fail(msg) {
+  console.error(msg);
+  $("#empty").classList.remove("hidden");
+  $("#emptyMsg").textContent = "⚠ " + msg;
+  $("#emptyMsg").style.color = "#b91c1c";
+  status(msg, 8000);
+}
 let stTimer;
 function status(msg, ms = 2500) { const s = $("#status"); s.textContent = msg; s.classList.add("show"); clearTimeout(stTimer); if (ms) stTimer = setTimeout(() => s.classList.remove("show"), ms); }
 const norm = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
@@ -28,20 +35,30 @@ function folderIdFrom(s) { if (!s) return ""; const m = s.match(/folders\/([\w-]
 function initAuth() {
   if (!CFG.clientId) { $("#emptyMsg").textContent = "Chưa cấu hình clientId trong config.js."; return; }
   tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: CFG.clientId, scope: SCOPES, callback: async (r) => {
-      if (r.error) { status("Đăng nhập lỗi: " + r.error, 5000); return; }
+    client_id: CFG.clientId, scope: SCOPES,
+    error_callback: (e) => {
+      const t = e && e.type;
+      fail(t === "popup_failed_to_open" ? "Trình duyệt chặn cửa sổ đăng nhập Google. Hãy cho phép popup cho trang này rồi bấm lại."
+        : t === "popup_closed" ? "Cửa sổ đăng nhập Google đã bị đóng. Bấm lại để đăng nhập."
+        : "Đăng nhập lỗi: " + (t || "không rõ"));
+      if (pendingReject) { const f = pendingReject; pendingReject = null; pendingAuth = null; f(new Error("đăng nhập chưa xong")); }
+    },
+    callback: async (r) => {
+      if (r.error) { fail("Đăng nhập lỗi: " + r.error + (r.error_description ? " – " + r.error_description : "")); return; }
       token = r.access_token; tokenExp = Date.now() + (r.expires_in - 60) * 1000;
       $("#btnLogin").classList.add("hidden");
       if (!me) { try { me = await (await gfetch("https://www.googleapis.com/oauth2/v3/userinfo")).json(); $("#user").textContent = me.email; } catch (e) {} }
-      if (pendingAuth) { const f = pendingAuth; pendingAuth = null; f(); }
+      if (pendingAuth) { const f = pendingAuth; pendingAuth = null; pendingReject = null; f(); }
     }
   });
   $("#btnLogin").onclick = () => tokenClient.requestAccessToken({ prompt: "" });
 }
-let pendingAuth = null;
+let pendingAuth = null, pendingReject = null;
 function ensureToken() {
   if (token && Date.now() < tokenExp) return Promise.resolve();
-  return new Promise((res) => { pendingAuth = res; tokenClient.requestAccessToken({ prompt: token ? "" : undefined }); });
+  if (!tokenClient) return Promise.reject(new Error("Chưa nạp được đăng nhập Google. Tải lại trang (Ctrl+F5) rồi thử lại."));
+  $("#emptyMsg").style.color = ""; $("#emptyMsg").textContent = "Đang chờ đăng nhập Google… (nếu không thấy cửa sổ, hãy cho phép popup)";
+  return new Promise((res, rej) => { pendingAuth = res; pendingReject = rej; tokenClient.requestAccessToken({ prompt: token ? "" : undefined }); });
 }
 async function gfetch(url, opt = {}) {
   await ensureToken();
@@ -55,6 +72,7 @@ async function gfetch(url, opt = {}) {
 /* ---------------- nguồn Drive ---------------- */
 function DriveSource(rootId) {
   const paths = {};  // đường dẫn tương đối -> id
+  let lastErr = "";
   const API = "https://www.googleapis.com/drive/v3/files";
   const q = (s) => encodeURIComponent(s);
   async function list(folderId) {
@@ -83,7 +101,7 @@ function DriveSource(rootId) {
                 paths[p + "/"] = f.id; queue.push([p, f.id]);
               } else paths[p] = f.id;
             }
-          }).catch((e) => status("Lỗi đọc Drive: " + e.message, 6000)).finally(() => { running--; next(); });
+          }).catch((e) => { lastErr = e.message; status("Lỗi đọc Drive: " + e.message, 6000); }).finally(() => { running--; next(); });
         }
       };
       next();
@@ -91,7 +109,7 @@ function DriveSource(rootId) {
   }
   const textCache = {};
   return {
-    kind: "drive",
+    kind: "drive", lastError: () => lastErr,
     async init() { await walk("", rootId, true); },
     async indexOriginals() { await walk("", rootId, false); },
     has: (p) => !!paths[p],
@@ -156,6 +174,7 @@ async function openBoard() {
   $("#empty").classList.add("hidden");
   status("Đang đọc danh sách file…", 0);
   await src.init();
+  if (src.kind === "drive" && !src.has("_BOARD/board.json")) throw new Error((src.lastError() ? "Drive báo lỗi: " + src.lastError() + " — " : "") + "Không thấy _BOARD/board.json trong thư mục. Hãy dán link đúng thư mục dự án (thư mục chứa _BOARD) và đảm bảo tài khoản đang đăng nhập có quyền xem.");
   status("Đang tải bố cục…", 0);
   board = await src.json("_BOARD/board.json");
   $("#projName").textContent = board.project;
@@ -461,7 +480,7 @@ function queueSave() {
 /* ---------------- khởi động ---------------- */
 function start() {
   const local = params.get("local");
-  if (local) { me = { email: "local@test", name: "Thử nghiệm" }; $("#btnLogin").classList.add("hidden"); src = LocalSource(local); openBoard().catch((e) => status("Lỗi: " + e.message, 8000)); return; }
+  if (local) { me = { email: "local@test", name: "Thử nghiệm" }; $("#btnLogin").classList.add("hidden"); src = LocalSource(local); openBoard().catch((e) => fail(e.message)); return; }
   const wait = () => { if (window.google && google.accounts) { initAuth(); afterAuthReady(); } else setTimeout(wait, 100); };
   wait();
 }
@@ -471,7 +490,7 @@ function afterAuthReady() {
     localStorage.setItem("pb_folder", id);
     if (params.get("folder") !== id) { const u = new URL(location.href); u.searchParams.set("folder", id); history.replaceState(null, "", u); }
     src = DriveSource(id);
-    ensureToken().then(openBoard).catch((e) => { status("Lỗi: " + e.message, 8000); $("#empty").classList.remove("hidden"); });
+    ensureToken().then(openBoard).catch((e) => fail(e.message));
   };
   $("#folderGo").onclick = () => { const id = folderIdFrom($("#folderInput").value.trim()); if (!id) return status("Link thư mục không hợp lệ", 3000); go(id); };
   if (fid) { $("#emptyMsg").textContent = "Bấm Đăng nhập Google để mở bảng."; $("#btnLogin").onclick = () => go(fid); }
