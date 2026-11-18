@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Project Board</title>
+<link rel="stylesheet" href="style.css">
+<script src="config.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<header id="top">
+  <button id="btnSide" title="Danh mục (\)">☰</button>
+  <b id="projName">Project Board</b>
+  <div id="searchWrap">
+    <input id="q" type="search" placeholder="Tìm trong tài liệu… (Ctrl+F)" autocomplete="off">
+    <span id="qInfo"></span>
+  </div>
+  <div class="tools">
+    <button data-tool="select" class="on" title="Chọn / kéo (V)">↖</button>
+    <button data-tool="note" title="Thêm ghi chú (N) – bấm lên bảng">🗒</button>
+    <button id="btnFit" title="Xem toàn bộ (Shift+1)">⤢</button>
+    <button id="btnNotes" title="Ẩn/hiện ghi chú">👁</button>
+  </div>
+  <span id="user"></span>
+  <button id="btnLogin">Đăng nhập Google</button>
+</header>
+<aside id="side" class="hidden">
+  <div id="toc"></div>
+</aside>
+<aside id="results" class="hidden">
+  <div class="rhead"><span id="rCount"></span><button id="rClose">✕</button></div>
+  <div id="rList"></div>
+</aside>
+<main id="viewport">
+  <div id="world"></div>
+  <div id="empty">
+    <h2>Project Board</h2>
+    <p id="emptyMsg">Đăng nhập Google để mở bảng.</p>
+    <div id="folderBox" class="hidden">
+      <p>Dán link thư mục dự án trên Google Drive (thư mục có chứa <code>_BOARD</code>):</p>
+      <input id="folderInput" placeholder="https://drive.google.com/drive/folders/...">
+      <button id="folderGo">Mở</button>
+    </div>
+  </div>
+</main>
+<div id="status"></div>
+<div id="zoomInfo"></div>
+<script src="app.js"></script>
+</body>
+</html>
