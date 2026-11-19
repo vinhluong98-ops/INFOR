@@ -1127,7 +1127,8 @@ function renderSelBar() {
     for (const [c, [hex, lab]] of Object.entries(MK)) { const i = el("i"); i.style.background = hex; i.title = "Đánh dấu: " + lab; i.onclick = () => setMark(pk, c); sw.appendChild(i); }
     const clr = el("i", "clr", "∅"); clr.title = "Bỏ đánh dấu"; clr.onclick = () => setMark(pk, ""); sw.appendChild(clr);
     bar.appendChild(sw);
-    btn("＋ WBS", "Gắn các trang đã chọn vào một hạng mục WBS", () => wbsPick(pk));
+    btn(wbsCur ? "＋ vào hạng mục đang mở" : "＋ WBS", wbsCur ? "Gắn các trang đã chọn thẳng vào hạng mục WBS đang mở" : "Gắn các trang đã chọn vào một hạng mục WBS", () => wbsPick(pk));
+    if (wbsCur) btn("…khác", "Gắn vào một hạng mục WBS khác", () => wbsPickOther(pk));
     if (wbsCur && pk.length === 1 && me) { const [d0, p0] = pk[0].split("#"); btn("★ Bản vẽ minh họa cho hạng mục đang mở", "Đặt trang này làm bản vẽ minh họa của hạng mục WBS đang mở", () => setMain(wbsCur, d0, +p0), "pri"); }
   }
   if (editMode) {
@@ -1453,8 +1454,10 @@ function openRestore() {
 function wbsPick(keys) {
   if (!wbs) return status("Chưa có dữ liệu WBS cho dự án này", 3000);
   if (!me) return status("Cần đăng nhập để gắn vào WBS", 3000);
+  if (wbsCur) return addToWbs(wbsCur, keys); // đang mở hạng mục nào thì gắn thẳng vào đó
   wbsChoose("Gắn " + keys.length + " trang vào hạng mục WBS", (id) => addToWbs(id, keys));
 }
+function wbsPickOther(keys) { wbsChoose("Gắn " + keys.length + " trang vào hạng mục khác", (id) => addToWbs(id, keys)); }
 function wbsChoose(title, onPick) {
   if (!wbs) return status("Chưa có dữ liệu WBS cho dự án này", 3000);
   if (!me) return status("Cần đăng nhập", 3000);
@@ -1652,7 +1655,7 @@ async function cropDone(d) {
   const it = n.it, cl = (v) => Math.max(0, Math.min(1, v));
   const r = [cl((Math.min(d.x0, d.x1) - it.x) / it.w), cl((Math.min(d.y0, d.y1) - it.y) / it.h), cl((Math.max(d.x0, d.x1) - it.x) / it.w), cl((Math.max(d.y0, d.y1) - it.y) / it.h)];
   if (r[2] - r[0] < 0.01 || r[3] - r[1] < 0.01) return status("Vùng cắt quá nhỏ", 2500);
-  const target = cropTarget, fromPopup = cropFromPopup; cropTarget = null; cropFromPopup = false; setTool("select");
+  const target = cropTarget || wbsCur, fromPopup = cropFromPopup; cropTarget = null; cropFromPopup = false; setTool("select");
   status("Đang cắt hình…", 0);
   let blob; try { blob = await cropBlob(it, r, n.el); } catch (e) { return status("Không cắt được: " + e.message, 6000); }
   const info = { doc: it.doc, page: it.page, r: r.map((v) => Math.round(v * 1e4) / 1e4) };
