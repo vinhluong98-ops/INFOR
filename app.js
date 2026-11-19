@@ -339,6 +339,7 @@ function fitAll() {
   if (!board || !board.groups.length) return;
   let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (const g of board.groups) { x0 = Math.min(x0, g.x); y0 = Math.min(y0, g.y); x1 = Math.max(x1, g.x + g.w); y1 = Math.max(y1, g.y + g.h); }
+  y0 -= 260; // chừa chỗ cho nút điều khiển phía trên vùng
   focusRect({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 0.02);
 }
 
@@ -824,7 +825,7 @@ function build() {
     const d = el("div", "grp"); d.dataset.gid = g.id; Object.assign(d.style, { left: g.x + "px", top: g.y + "px", width: g.w + "px", height: g.h + "px" });
     d.appendChild(el("div", "gt", g.title));
     const c = el("div", "gctl");
-    c.append(B(null, "⊟ Ẩn hết", "Ẩn tất cả các bộ trong vùng này", () => collapseCol(g.id, true)), B(null, "⊞ Hiện hết", "Hiện tất cả các bộ trong vùng này", () => collapseCol(g.id, false)));
+    c.append(B(null, "⊟", "Ẩn tất cả các bộ trong vùng này", () => collapseCol(g.id, true)), B(null, "⊞", "Hiện tất cả các bộ trong vùng này", () => collapseCol(g.id, false)));
     c.append(B("eo", "✎", "Đổi tên vùng", () => renameCol(g.id)));
     if (!g.base) c.append(B("eo danger", "✕", "Xoá vùng (các bộ bên trong trở về vùng mặc định)", () => deleteCol(g.id)));
     const gm = el("div", "gm eo", "✥"); gm.title = "Kéo để đổi thứ tự vùng";

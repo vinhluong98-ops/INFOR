@@ -97,9 +97,10 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 #world{--inv:10}
 .grp{border:max(4px,calc(1.5px * var(--inv))) solid #dc2626;border-radius:0;background:#fff}
 .grp>.gt{left:0;right:0;top:40px;text-align:center;color:#dc2626;font-size:clamp(96px,calc(15px * var(--inv)),190px);line-height:1.1;overflow:hidden;text-overflow:ellipsis}
-.gctl{position:absolute;right:30px;top:14px;display:flex;gap:8px;z-index:4}
-.gctl button,.sh button{font-size:clamp(22px,calc(11px * var(--inv)),44px);padding:.15em .5em;border-radius:.3em;line-height:1.2;white-space:nowrap}
-.gm{font-size:clamp(26px,calc(13px * var(--inv)),50px);cursor:move;color:#7c3aed;padding:0 .3em;background:#fff;border:1px solid #c4b5fd;border-radius:.3em}
+.gctl{position:absolute;right:0;bottom:calc(100% + 14px);display:flex;gap:8px;z-index:4}
+.gctl button{font-size:clamp(26px,calc(14px * var(--inv)),170px);padding:.05em .35em;border-radius:.2em;line-height:1.2}
+.sh button{font-size:clamp(22px,calc(11px * var(--inv)),44px);padding:.15em .5em;border-radius:.3em;line-height:1.2;white-space:nowrap}
+.gm{font-size:clamp(26px,calc(14px * var(--inv)),170px);cursor:move;color:#7c3aed;padding:0 .3em;background:#fff;border:1px solid #c4b5fd;border-radius:.3em}
 .gw{position:absolute;top:0;bottom:0;right:calc(-8px * var(--inv));width:calc(14px * var(--inv));cursor:ew-resize;z-index:4}
 .editing .gw:hover{background:rgba(124,58,237,.25)}
 .eo{display:none!important}
