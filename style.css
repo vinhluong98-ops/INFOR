@@ -142,12 +142,14 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 #guides .gh2{position:absolute;left:0;right:0;height:0;border-top:1px dashed #e11d48}
 /* thanh công cụ */
 #layoutSel{font:inherit;border:1px solid #cbd5e1;border-radius:6px;padding:3px 4px;max-width:170px;background:#fff}
-#drawbar{position:fixed;left:8px;top:50%;transform:translateY(-50%);z-index:16;display:flex;flex-direction:column;gap:3px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:5px;box-shadow:0 4px 14px rgba(15,23,42,.15)}
-#drawbar button{width:34px;height:32px;padding:0;font-size:16px}
-body:has(#side:not(.hidden)) #drawbar{left:330px}
-.dsep{height:1px;background:#e2e8f0;margin:2px 0}
-#colors{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:2px}
-#colors i{width:14px;height:14px;border-radius:50%;cursor:pointer;display:block;box-shadow:0 0 0 1px #cbd5e1;margin:auto}
+#drawbar{position:fixed;right:12px;bottom:34px;z-index:16;display:flex;flex-direction:row;align-items:center;gap:4px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:4px;box-shadow:0 4px 14px rgba(15,23,42,.15)}
+#dbTools{display:flex;flex-direction:row;align-items:center;gap:3px}
+#drawbar button{height:32px;padding:0;font-size:16px;min-width:34px}
+#drawbar button#dbToggle{font-size:13px;padding:0 8px;white-space:nowrap}
+#drawbar.min #dbTools{display:none}
+.dsep{width:1px;height:24px;background:#e2e8f0;margin:0 3px}
+#colors{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;padding:2px 4px}
+#colors i{width:16px;height:16px;border-radius:50%;cursor:pointer;display:block;box-shadow:0 0 0 1px #cbd5e1;margin:auto}
 #colors i.on{box-shadow:0 0 0 2px #fff,0 0 0 4px #1e293b}
 #bars{position:fixed;bottom:58px;left:50%;transform:translateX(-50%);z-index:18;display:flex;flex-direction:column-reverse;align-items:center;gap:6px;pointer-events:none}
 .bar{pointer-events:auto;display:flex;align-items:center;gap:4px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:5px 8px;box-shadow:0 4px 14px rgba(15,23,42,.18);white-space:nowrap}

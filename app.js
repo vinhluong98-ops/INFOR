@@ -402,6 +402,7 @@ window.addEventListener("keydown", (e) => {
   if (editMode && sel.size && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteSelection(); return; }
   if (editMode && sel.size && e.key.startsWith("Arrow")) { e.preventDefault(); nudgeSel(e.key, e.shiftKey ? 100 : 10); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === "b") { $("#dbToggle").click(); return; }
   if (e.key === " ") spaceDown = true;
   if (e.shiftKey && (e.key === "!" || e.code === "Digit1")) { e.preventDefault(); fitAll(); }
   else if (e.key === "v" || e.key === "V") setTool("select");
@@ -1451,4 +1452,11 @@ function afterAuthReady() {
   else { $("#emptyMsg").textContent = "Đăng nhập rồi dán link thư mục dự án."; $("#folderBox").classList.remove("hidden"); $("#btnLogin").onclick = () => ensureToken(); }
 }
 start();
+(function () {
+  const db = $("#drawbar"), tg = $("#dbToggle");
+  const set = (m) => { db.classList.toggle("min", m); tg.textContent = m ? "🖊 ▴" : "🖊 ▾"; try { localStorage.setItem("pb_dbmin", m ? "1" : "0"); } catch (e) {} };
+  tg.addEventListener("click", () => set(!db.classList.contains("min")));
+  let m = false; try { m = localStorage.getItem("pb_dbmin") === "1"; } catch (e) {}
+  set(m);
+})();
 })();
