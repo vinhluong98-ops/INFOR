@@ -1502,10 +1502,7 @@ function mainBox(id, it) {
   w.appendChild(el("h4", null, "Bản vẽ minh họa"));
   const row = el("div", "mrw");
   if (cur) {
-    const n = nodeEls.get(cur.doc + "#" + cur.page), th = el("div", "mth");
-    if (n) { const i = el("img"), s0 = n.el.querySelector("img"); if (s0 && s0.src) i.src = s0.src; else if (n.it.thumb) loadImg(n.it.thumb, (u) => { i.src = u; }); th.appendChild(i); }
-    th.onclick = () => goPage(cur.doc, cur.page); row.appendChild(th);
-    const dd = board.docs[cur.doc], tx = el("div", "mtx"); tx.append(el("b", null, (dd ? dd.name : cur.doc) + " · tr." + cur.page), el("small", null, m ? "Do bạn/nhóm chọn" : "Mặc định (gợi ý tự động)")); row.appendChild(tx);
+    const dd = board.docs[cur.doc], tx = el("div", "mtx"); tx.append(el("b", null, (dd ? dd.name : cur.doc) + " · tr." + cur.page), el("small", null, m ? "Do bạn/nhóm chọn" : "Mặc định (gợi ý tự động)")); tx.style.cursor = "pointer"; tx.onclick = () => goPage(cur.doc, cur.page); row.appendChild(tx);
   } else row.appendChild(el("div", "wbox", "Chưa có bản vẽ minh họa."));
   w.appendChild(row);
   const bar = el("div", "wnb");

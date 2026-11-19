@@ -75,7 +75,7 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 .bdg.w{background:#d97706}.bdg.r{background:#dc2626}.bdg.ok{background:#16a34a}.bdg.g{background:#94a3b8}
 #wbsFilter{display:flex;gap:6px;align-items:center;font-size:12px;margin-bottom:6px}
 #wbsFilter input[type=search]{flex:1;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font:inherit}
-#wbsd{position:fixed;top:48px;right:0;bottom:0;width:min(600px,46vw);background:#fff;border-left:1px solid #e2e8f0;z-index:16;display:flex;flex-direction:column}
+#wbsd{position:fixed;top:48px;right:0;bottom:0;width:min(400px,31vw);background:#fff;border-left:1px solid #e2e8f0;z-index:16;display:flex;flex-direction:column}
 #wbsdBody{overflow:auto;padding:10px 12px;flex:1;font-size:13px}
 #wbsdBody h3{margin:0 0 2px;font-size:16px}
 #wbsdBody .sub{color:#64748b;font-size:12px;margin-bottom:8px}
@@ -223,7 +223,7 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb;align-self:fle
 #lb{position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:70;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px}
 #lb img{max-width:94vw;max-height:84vh;border-radius:6px;background:#fff}
 #lb .lbb{display:flex;gap:8px}#lb .lbb button{border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
-body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(600px,46vw) + 12px)}
+body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 .wnb small{color:#64748b;align-self:center}
 #wbsdBody .wnb{margin:6px 0 0}
 .wnb button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;font:inherit;font-size:12px}
@@ -232,3 +232,6 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(600px,46vw) + 12px)}
 .mth img{width:100%;height:100%;object-fit:contain;display:block}
 .mtx{display:flex;flex-direction:column;min-width:0}.mtx small{color:#64748b}
 .mainbox .wnb button.pri,#selbar button.pri{background:#2563eb;color:#fff;border-color:#2563eb}
+#wbsdBody{overflow-wrap:anywhere}
+#wbsdBody .wnb{flex-wrap:wrap}
+.wthumbs{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
