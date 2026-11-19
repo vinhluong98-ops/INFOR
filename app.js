@@ -196,6 +196,7 @@ async function openBoard() {
   fitAll();
   status(`Đã mở: ${Object.keys(board.docs).length} tài liệu, ${board.items.filter((i) => i.type === "page").length} trang`);
   src.json("_BOARD/index.json").then((d) => { index = d.pages; index.forEach((p) => { p.text = p.text.normalize("NFC"); p.n = normC(p.text); }); $("#q").placeholder = `Tìm trong ${index.length} trang… (Ctrl+F)`; }).catch(() => status("Chưa có index.json – không tìm kiếm được", 5000));
+  src.json("_BOARD/wbs.json").then((w) => { if (w && w.zones) { wbs = w; $("#btnWbs").classList.remove("hidden"); document.querySelector("[data-tab=wbs]").classList.remove("hidden"); renderWbs(); } }).catch(() => {});
   origReady = src.indexOriginals();
   origReady.then(() => document.querySelectorAll(".lnk").forEach((e) => e.classList.toggle("nf", !src.has(e.dataset.path))));
   src.loadNotes().then((n) => { notes = n; renderNotes(); }).catch((e) => console.warn(e));
@@ -355,7 +356,7 @@ function focusRect(r, pad = 0.05, anim = true) {
   const W = vp.clientWidth, H = vp.clientHeight;
   // chừa chỗ cho thanh danh mục / kết quả tìm kiếm đang mở
   const L = $("#side").classList.contains("hidden") ? 0 : $("#side").offsetWidth;
-  const R = $("#results").classList.contains("hidden") ? 0 : $("#results").offsetWidth;
+  const R = Math.max($("#results").classList.contains("hidden") ? 0 : $("#results").offsetWidth, $("#wbsd").classList.contains("hidden") ? 0 : $("#wbsd").offsetWidth);
   const AW = Math.max(200, W - L - R), CX = L + AW / 2;
   const s = Math.min(AW / (r.w * (1 + 2 * pad)), H / (r.h * (1 + 2 * pad)));
   const tgt = { s, x: CX - (r.x + r.w / 2) * s, y: H / 2 - (r.y + r.h / 2) * s };
@@ -462,7 +463,7 @@ function search() {
     row.onclick = () => goResult(i);
     list.appendChild(row);
   });
-  $("#results").classList.toggle("hidden", !results.length);
+  $("#results").classList.toggle("hidden", !results.length); if (results.length) $("#wbsd").classList.add("hidden");
   cur = -1;
 }
 function esc(s) { return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
@@ -507,7 +508,7 @@ function clearHl() { for (const h of hlEls) { if (h.classList.contains("pg")) h.
 
 /* ---------------- ghi chú ---------------- */
 let saveTimer;
-function myNotes() { const k = me ? me.email : "local"; if (!notes[k]) notes[k] = { author: me ? (me.name || me.email) : "local", notes: [] }; return notes[k]; }
+function myNotes() { const k = me ? me.email : "local"; if (!notes[k]) notes[k] = { author: me ? (me.name || me.email) : "local", notes: [], wbs: {} }; return notes[k]; }
 function toWorld(e) { const r = vp.getBoundingClientRect(); return { x: (e.clientX - r.left - view.x) / view.s, y: (e.clientY - r.top - view.y) / view.s }; }
 function addNoteAt(e) {
   if (!me) { status("Cần đăng nhập để ghi chú", 3000); return; }
@@ -550,6 +551,121 @@ function queueSave() {
   saveTimer = setTimeout(async () => {
     try { await src.saveNotes(myNotes()); status("Đã lưu ghi chú", 1200); } catch (e) { status("Lưu ghi chú lỗi: " + e.message, 6000); }
   }, 1200);
+}
+
+
+/* ---------------- WBS Dictionary ---------------- */
+let wbs = null, wbsCur = null, wbsOnlyWarn = false, wbsQ = "";
+const CHK = [["spec", "Đã đối chiếu BOQ ↔ SPEC"], ["dwg", "Đã đối chiếu BOQ ↔ bản vẽ"], ["ok", "Đã duyệt hạng mục (đủ thông tin)"]];
+function wbsState(id) { const w = (myNotes().wbs = myNotes().wbs || {}); return (w[id] = w[id] || { chk: {}, links: {}, note: "" }); }
+function wbsPeers(id) { // ai đã duyệt hạng mục này
+  const out = [];
+  for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.chk && r.chk.ok) out.push((d.author || owner)); }
+  return out;
+}
+function allWbsItems() { const o = []; for (const z of wbs.zones) for (const p of z.packages) for (const it of p.items) o.push({ z, p, it }); return o; }
+function setSideTab(t) {
+  document.querySelectorAll("#sideTabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  $("#toc").classList.toggle("hidden", t !== "toc"); $("#wbsList").classList.toggle("hidden", t !== "wbs");
+  $("#side").classList.toggle("wide", t === "wbs");
+  if (t !== "wbs") closeWbsd();
+}
+document.querySelectorAll("#sideTabs button").forEach((b) => (b.onclick = () => setSideTab(b.dataset.tab)));
+$("#btnWbs").onclick = () => {
+  const open = !$("#side").classList.contains("hidden") && !$("#wbsList").classList.contains("hidden");
+  if (open) { $("#side").classList.add("hidden"); closeWbsd(); } else { $("#side").classList.remove("hidden"); setSideTab("wbs"); }
+};
+$("#wbsdClose").onclick = closeWbsd;
+function closeWbsd() { $("#wbsd").classList.add("hidden"); wbsCur = null; document.querySelectorAll(".wi.cur").forEach((e) => e.classList.remove("cur")); clearHl(); }
+function renderWbs() {
+  const box = $("#wbsList"); box.innerHTML = "";
+  const f = el("div"); f.id = "wbsFilter";
+  const q = el("input"); q.type = "search"; q.placeholder = "Lọc hạng mục…"; q.value = wbsQ; q.oninput = () => { wbsQ = q.value; renderWbs(); const i2 = box.querySelector("input"); i2.focus(); i2.setSelectionRange(wbsQ.length, wbsQ.length); };
+  const lb = el("label"); const cb = el("input"); cb.type = "checkbox"; cb.checked = wbsOnlyWarn; cb.onchange = () => { wbsOnlyWarn = cb.checked; renderWbs(); };
+  lb.append(cb, document.createTextNode(" Chỉ có cảnh báo")); f.append(q, lb); box.appendChild(f);
+  const nq = norm(wbsQ);
+  for (const z of wbs.zones) {
+    const zh = el("div", "wz", z.title); zh.title = z.note || ""; box.appendChild(zh);
+    for (const p of z.packages) {
+      const ph = el("div", "wp", p.title); ph.appendChild(el("small", null, (p.area_m2 ? p.area_m2 + " m² · " : "") + p.items.length + " dòng BOQ")); box.appendChild(ph);
+      let lastCat = null;
+      const byCat = {}; for (const it of p.items) (byCat[it.cat] = byCat[it.cat] || []).push(it);
+      for (const [cat, its] of Object.entries(byCat)) {
+        const rows = its.filter((it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || norm(it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
+        if (!rows.length) continue;
+        box.appendChild(el("div", "wc", cat));
+        for (const it of rows) {
+          const r = el("div", "wi"); r.dataset.id = it.id; if (wbsCur === it.id) r.classList.add("cur");
+          r.appendChild(el("span", "n", it.stt));
+          const t = el("span", "t", it.name);
+          if (it.warnings.length) { const b = el("span", "bdg " + (it.matrix === "Central" ? "r" : "w"), "⚠" + it.warnings.length); t.appendChild(b); }
+          if (wbsPeers(it.id).length) t.appendChild(el("span", "bdg ok", "✓"));
+          r.appendChild(t); r.appendChild(el("span", "q", it.qty != null ? it.qty.toLocaleString("vi-VN") + " " + it.unit : ""));
+          r.onclick = () => openWbsItem(it.id); box.appendChild(r);
+        }
+      }
+    }
+    if (z.spec_unlinked && z.spec_unlinked.length) {
+      box.appendChild(el("div", "wc", "Có trong SPEC nhưng chưa thấy dòng BOQ"));
+      for (const u of z.spec_unlinked) {
+        const r = el("div", "wi"); r.appendChild(el("span", "n", "·")); r.appendChild(el("span", "t", u.code + " – " + u.desc + " (" + u.loc + ")")); r.appendChild(el("span", "q", "tr." + u.page));
+        r.onclick = () => goPage(u.doc, u.page); box.appendChild(r);
+      }
+    }
+  }
+}
+function goPage(doc, page) {
+  const pe = pageEls.find((p) => p.it.doc === doc && p.it.page === page); if (!pe) return status("Không thấy trang này trên bảng", 3000);
+  clearHl(); pe.el.classList.add("focus"); hlEls.push(pe.el); focusRect(pe.it, 0.04);
+}
+function openWbsItem(id) {
+  const f = allWbsItems().find((x) => x.it.id === id); if (!f) return; const { z, p, it } = f; wbsCur = id;
+  $("#results").classList.add("hidden"); $("#wbsd").classList.remove("hidden");
+  document.querySelectorAll(".wi").forEach((e) => e.classList.toggle("cur", e.dataset.id === id));
+  const st = me ? wbsState(id) : { chk: {}, links: {}, note: "" };
+  const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
+  B.appendChild(el("h3", null, it.stt + ". " + it.name));
+  B.appendChild(el("div", "sub", it.cat + (it.qty != null ? " · " + it.qty.toLocaleString("vi-VN") + " " + it.unit : "") + " · BOQ NEM mục: " + it.boq_group));
+  // phạm vi
+  B.appendChild(el("h4", null, "Phạm vi"));
+  const sc = el("div", "wbox" + (it.matrix === "NEM" ? "" : " err"));
+  sc.className = "wbox" + (it.matrix === "NEM" ? "" : it.matrix === "Central" ? " err" : " warn");
+  sc.textContent = "Báo giá (BOQ): NEM · Ma trận phạm vi cho '" + it.cat + "': " + it.matrix + (it.matrix === "NEM" ? " ✓ khớp" : it.matrix === "Central" ? " ✗ không khớp" : " (chưa có nhà thầu trong ma trận)"); B.appendChild(sc);
+  if (it.desc) { B.appendChild(el("h4", null, "Mô tả vật liệu theo BOQ")); const d = el("div", "wbox"); d.style.whiteSpace = "pre-wrap"; d.textContent = it.desc; B.appendChild(d); }
+  if (it.warnings.length) { B.appendChild(el("h4", null, "Cần rà soát")); for (const w of it.warnings) B.appendChild(el("div", "wbox warn", "⚠ " + w)); }
+  const linkRow = (key, title, sub, click, conf) => {
+    const r = el("div", "lk"); const c = el("div", "c"); c.appendChild(el("b", null, title)); if (sub) c.appendChild(el("small", null, sub)); if (conf) c.appendChild(el("small", "cf", conf));
+    r.appendChild(c); r.onclick = click;
+    if (key) {
+      const v = el("button", "v", "?"); const paint = () => { const s = st.links[key]; v.className = "v" + (s === "ok" ? " ok" : s === "no" ? " no" : ""); v.textContent = s === "ok" ? "✓" : s === "no" ? "✗" : "?"; v.title = "Bấm để duyệt: ? → ✓ đúng → ✗ sai"; };
+      paint(); v.onclick = (e) => { e.stopPropagation(); if (!me) return status("Cần đăng nhập để duyệt", 3000); st.links[key] = !st.links[key] ? "ok" : st.links[key] === "ok" ? "no" : ""; paint(); queueSave(); };
+      r.appendChild(v);
+    }
+    return r;
+  };
+  B.appendChild(el("h4", null, "SPEC (" + it.specs.length + ")"));
+  if (!it.specs.length) B.appendChild(el("div", "wbox warn", "Chưa có mã SPEC gắn với dòng này."));
+  for (const s of it.specs) B.appendChild(linkRow("s:" + s.code, s.code + " · " + s.desc, s.loc + " · " + s.product + " · NCC: " + s.supplier, () => goPage(s.doc, s.page), s.conf === "cao" ? "Gợi ý: khớp tên" : "Gợi ý: tham khảo, cần xác nhận"));
+  B.appendChild(el("h4", null, "Bản vẽ (" + it.drawings.length + ")"));
+  if (!it.drawings.length) B.appendChild(el("div", "wbox warn", "Chưa có bản vẽ DD cho dòng này."));
+  for (const d of it.drawings) B.appendChild(linkRow("d:" + d.page, d.label, "Trang " + d.page + " – DD 1st Submission", () => goPage(d.doc, d.page)));
+  if (it.files.length) {
+    B.appendChild(el("h4", null, "File CAD"));
+    for (const f2 of it.files) B.appendChild(linkRow(null, f2.label, f2.path.split("/").pop(), () => { const u = src.openUrl(f2.path); if (u) window.open(u, "_blank"); else status("Chưa tìm thấy file trên Drive", 3000); }));
+  }
+  B.appendChild(el("h4", null, "Rà soát"));
+  for (const [k, lab] of CHK) {
+    const l = el("label"); const c = el("input"); c.type = "checkbox"; c.checked = !!st.chk[k]; c.disabled = !me;
+    c.onchange = () => { st.chk[k] = c.checked; st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave(); renderWbs(); };
+    l.append(c, document.createTextNode(" " + lab)); B.appendChild(l);
+  }
+  const ta = el("textarea"); ta.placeholder = me ? "Ghi chú của bạn…" : "Đăng nhập để ghi chú"; ta.value = st.note || ""; ta.disabled = !me;
+  ta.oninput = () => { st.note = ta.value; st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave(); };
+  B.appendChild(ta);
+  const peers = wbsPeers(id); if (peers.length) B.appendChild(el("div", "who", "Đã duyệt bởi: " + peers.join(", ")));
+  for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
+  // đưa bản vẽ chính lên màn hình
+  const first = it.drawings[0] || it.specs[0]; if (first) goPage(first.doc, first.page);
 }
 
 /* ---------------- khởi động ---------------- */

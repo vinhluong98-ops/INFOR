@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Project Board</title>
-<link rel="stylesheet" href="style.css?v=3">
-<script src="config.js?v=3"></script>
+<link rel="stylesheet" href="style.css?v=4">
+<script src="config.js?v=4"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -21,12 +21,19 @@
     <button data-tool="note" title="Thêm ghi chú (N) – bấm lên bảng">🗒</button>
     <button id="btnFit" title="Xem toàn bộ (Shift+1)">⤢</button>
     <button id="btnNotes" title="Ẩn/hiện ghi chú">👁</button>
+    <button id="btnWbs" class="hidden" title="WBS Dictionary – hạng mục kèm bản vẽ, SPEC, BOQ">WBS</button>
   </div>
   <span id="user"></span>
   <button id="btnLogin">Đăng nhập Google</button>
 </header>
 <aside id="side" class="hidden">
+  <div id="sideTabs"><button data-tab="toc" class="on">Tài liệu</button><button data-tab="wbs" class="hidden">WBS</button></div>
   <div id="toc"></div>
+  <div id="wbsList" class="hidden"></div>
+</aside>
+<aside id="wbsd" class="hidden">
+  <div class="rhead"><span id="wbsdTitle">Chi tiết hạng mục</span><button id="wbsdClose">✕</button></div>
+  <div id="wbsdBody"></div>
 </aside>
 <aside id="results" class="hidden">
   <div class="rhead"><span id="rCount"></span><button id="rClose">✕</button></div>
@@ -46,7 +53,7 @@
 </main>
 <div id="status"></div>
 <div id="zoomInfo"></div>
-<script src="lib/pdf.min.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="lib/pdf.min.js?v=4"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
