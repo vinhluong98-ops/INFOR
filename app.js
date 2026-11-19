@@ -16,12 +16,8 @@ let view = { x: 40, y: 40, s: 0.1 };
 const world = $("#world"), vp = $("#viewport");
 const pageEls = [];        // {it, el, img, level}
 let tool = "select";
-let baseBoard = null;      // board.json gốc (không bị sửa)
-let L = null;              // bố cục đang dùng (null = gốc)
-let layoutOwner = "base";  // "base" hoặc email người có bố cục
-let editMode = false;
-const sel = new Set();     // các mục đang chọn (khoá keyOf)
-const nodeEls = new Map(); // khoá -> {it, el}
+let baseBoard = null, L = null, layoutOwner = "base", editMode = false;
+const sel = new Set(), nodeEls = new Map();
 
 /* ---------------- tiện ích ---------------- */
 function fail(msg) {
@@ -79,13 +75,14 @@ async function gfetch(url, opt = {}) {
 /* ---------------- nguồn Drive ---------------- */
 function DriveSource(rootId) {
   const paths = {};  // đường dẫn tương đối -> id
+  const fmeta = {};
   let lastErr = "";
   const API = "https://www.googleapis.com/drive/v3/files";
   const q = (s) => encodeURIComponent(s);
   async function list(folderId) {
     let out = [], pt = "";
     do {
-      const r = await (await gfetch(`${API}?q=${q(`'${folderId}' in parents and trashed=false`)}&fields=nextPageToken,files(id,name,mimeType)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${pt ? "&pageToken=" + pt : ""}`)).json();
+      const r = await (await gfetch(`${API}?q=${q(`'${folderId}' in parents and trashed=false`)}&fields=nextPageToken,files(id,name,mimeType,size,modifiedTime)&pageSize=1000&supportsAllDrives=true&includeItemsFromAllDrives=true${pt ? "&pageToken=" + pt : ""}`)).json();
       out = out.concat(r.files); pt = r.nextPageToken;
     } while (pt);
     return out;
@@ -106,7 +103,7 @@ function DriveSource(rootId) {
                 if (!onlyBoard && !pre && f.name === "_BOARD") continue;
                 if (/^(pages|text)$/.test(f.name) && pre === "_BOARD") { paths[p + "/"] = f.id; if (f.name === "pages") queue.push([p, f.id]); continue; }
                 paths[p + "/"] = f.id; queue.push([p, f.id]);
-              } else paths[p] = f.id;
+              } else { paths[p] = f.id; fmeta[p] = { size: +f.size || 0, mt: f.modifiedTime || "" }; }
             }
           }).catch((e) => { lastErr = e.message; status("Lỗi đọc Drive: " + e.message, 6000); }).finally(() => { running--; next(); });
         }
@@ -142,7 +139,7 @@ function DriveSource(rootId) {
       return out.buffer;
     },
     openUrl(p) { const id = paths[p]; return id ? `https://drive.google.com/file/d/${id}/view` : null; },
-    async listPdfs() { await (origReady || Promise.resolve()); return Object.keys(paths).filter((p) => /\.pdf$/i.test(p) && !p.startsWith("_BOARD/")).map((p) => ({ path: p, name: p.split("/").pop() })); },
+    async files() { await (origReady || Promise.resolve()); return Object.keys(fmeta).filter((p) => !p.startsWith("_BOARD/")).map((p) => ({ path: p, size: fmeta[p].size, mt: fmeta[p].mt })); },
     async loadNotes() {
       const nf = paths["_BOARD/notes/"]; if (!nf) return {};
       const fs = await list(nf), out = {};
@@ -184,7 +181,7 @@ function LocalSource(base) {
     async pdfData(p) { return (await fetch(base + enc(p))).arrayBuffer(); },
     async text(id) { return textCache[id] || (textCache[id] = await (await fetch(base + "_BOARD/text/" + id + ".json")).json()); },
     openUrl(p) { return base + enc(p); },
-    async listPdfs() { try { return (await (await fetch(base + "_BOARD/pdflist.json")).json()).map((p) => ({ path: p, name: p.split("/").pop() })); } catch (e) { return []; } },
+    async files() { try { return await (await fetch(base + "_BOARD/filelist.json")).json(); } catch (e) { return []; } },
     async loadNotes() { try { return JSON.parse(localStorage.getItem("pb_notes") || "{}"); } catch (e) { return {}; } },
     async saveNotes(d) { const all = JSON.parse(localStorage.getItem("pb_notes") || "{}"); all[me.email] = d; localStorage.setItem("pb_notes", JSON.stringify(all)); }
   };
@@ -197,68 +194,18 @@ async function openBoard() {
   await src.init();
   if (src.kind === "drive" && !src.has("_BOARD/board.json")) throw new Error((src.lastError() ? "Drive báo lỗi: " + src.lastError() + " — " : "") + "Không thấy _BOARD/board.json trong thư mục. Hãy dán link đúng thư mục dự án (thư mục chứa _BOARD) và đảm bảo tài khoản đang đăng nhập có quyền xem.");
   status("Đang tải bố cục…", 0);
-  baseBoard = await src.json("_BOARD/board.json"); L = null; layoutOwner = "base"; board = computeBoard();
-  $("#projName").textContent = board.project;
-  document.title = board.project + " – Project Board";
-  build();
+  baseBoard = await src.json("_BOARD/board.json"); L = null; layoutOwner = "base";
+  try { coll = JSON.parse(localStorage.getItem("pb_coll") || "{}"); } catch (e) { coll = {}; }
+  $("#projName").textContent = baseBoard.project;
+  document.title = baseBoard.project + " – Project Board";
+  rebuildBoard();
   fitAll();
   status(`Đã mở: ${Object.keys(board.docs).length} tài liệu, ${board.items.filter((i) => i.type === "page").length} trang`);
-  src.json("_BOARD/index.json").then((d) => { index = d.pages; index.forEach((p) => { p.text = p.text.normalize("NFC"); p.n = normC(p.text); }); $("#q").placeholder = `Tìm trong ${index.length} trang… (Ctrl+F)`; }).catch(() => status("Chưa có index.json – không tìm kiếm được", 5000));
+  src.json("_BOARD/index.json").then((d) => { index = d.pages; index.forEach((p) => { p.text = p.text.normalize("NFC"); p.n = normC(p.text); }); index.push(...pendingIdx); pendingIdx = []; $("#q").placeholder = `Tìm trong ${index.length} trang… (Ctrl+F)`; }).catch(() => status("Chưa có index.json – không tìm kiếm được", 5000));
   src.json("_BOARD/wbs.json").then((w) => { if (w && w.zones) { wbs = w; $("#btnWbs").classList.remove("hidden"); document.querySelector("[data-tab=wbs]").classList.remove("hidden"); renderWbs(); } }).catch(() => {});
   origReady = src.indexOriginals();
-  origReady.then(() => document.querySelectorAll(".lnk").forEach((e) => e.classList.toggle("nf", !src.has(e.dataset.path))));
+  origReady.then(async () => { origDone = true; try { files = await src.files(); } catch (e) { files = []; } scheduleRebuild(); });
   src.loadNotes().then((n) => { notes = n; initLayoutAfterNotes(); }).catch((e) => console.warn(e));
-}
-
-function build() {
-  world.innerHTML = ""; pageEls.length = 0; nodeEls.clear();
-  for (const g of board.groups) {
-    const d = el("div", "grp"); d.dataset.gid = g.id; Object.assign(d.style, { left: g.x + "px", top: g.y + "px", width: g.w + "px", height: g.h + "px", borderColor: g.color });
-    const t = el("div", "gt", g.title); t.style.color = g.color; d.appendChild(t);
-    const gr = el("div", "gr", "✎"); gr.title = "Đổi tên vùng";
-    const gx = el("div", "gx", "✕"); gx.title = "Xoá vùng (các trang bên trong vẫn giữ)";
-    const gh = el("div", "gh"); gh.title = "Kéo để đổi cỡ vùng";
-    const gm = el("div", "gm", "✥"); gm.title = "Kéo để di chuyển cả vùng (kèm các trang bên trong)";
-    d.append(gm, gr, gx, gh); world.appendChild(d);
-  }
-  for (const it of board.items) {
-    const k = keyOf(it);
-    if (it.type === "label") {
-      const d = el("div", "lbl"); d.style.left = it.x + "px"; d.style.top = it.y + "px"; d.dataset.k = k;
-      d.appendChild(el("b", null, it.text)); if (it.sub) d.appendChild(el("small", null, it.sub)); world.appendChild(d);
-      nodeEls.set(k, { it, el: d });
-    } else if (it.type === "page") {
-      const d = el("div", "pg"); Object.assign(d.style, { left: it.x + "px", top: it.y + "px", width: it.w + "px", height: it.h + "px" });
-      d.dataset.doc = it.doc; d.dataset.page = it.page; d.dataset.k = k;
-      const img = el("img"); img.alt = ""; img.draggable = false; d.appendChild(img);
-      d.appendChild(el("span", "pn", it.page + "/" + (board.docs[it.doc] ? board.docs[it.doc].pages : "?")));
-      world.appendChild(d); pageEls.push({ it, el: d, img, level: 0, want: 0 });
-      nodeEls.set(k, { it, el: d });
-    } else if (it.type === "link") {
-      const d = el("div", "lnk"); Object.assign(d.style, { left: it.x + "px", top: it.y + "px", width: it.w + "px", height: it.h + "px" });
-      d.dataset.path = it.path; d.dataset.k = k; d.title = it.path + "\n(bấm để mở)";
-      d.appendChild(el("span", "ext " + it.ext, it.ext)); d.appendChild(el("span", "nm", it.name));
-      d.addEventListener("click", () => { if (editMode) return; const u = src.openUrl(it.path); if (u) window.open(u, "_blank"); else status("Chưa tìm thấy file trên Drive (đang đồng bộ?)", 4000); });
-      world.appendChild(d);
-      nodeEls.set(k, { it, el: d });
-    }
-  }
-  buildToc();
-  apply();
-}
-function buildToc() {
-  const toc = $("#toc"); toc.innerHTML = "";
-  for (const g of board.groups) {
-    const box = el("div", "tg"); const h = el("div", "th", g.title); h.style.color = g.color;
-    h.onclick = () => focusRect(g, 0.02); box.appendChild(h);
-    for (const [id, d] of Object.entries(board.docs)) {
-      if (d.group !== g.id) continue;
-      const r = el("div", "td"); r.textContent = d.name + " "; r.appendChild(el("small", null, d.pages + " tr" + (d.scanned ? " · OCR" : "")));
-      r.title = d.path; r.onclick = () => { const it = board.items.find((i) => i.type === "page" && i.doc === id && i.page === 1); focusRect(it, 0.05); };
-      box.appendChild(r);
-    }
-    toc.appendChild(box);
-  }
 }
 
 /* ---------------- vẽ / tải ảnh theo màn hình ---------------- */
@@ -296,32 +243,13 @@ function updateImages() {
     const sx = it.x * view.s + view.x, sy = it.y * view.s + view.y, sw = it.w * view.s, sh = it.h * view.s;
     const vis = sx + sw > -m && sx < W + m && sy + sh > -m && sy < H + m;
     if (!vis) continue;
-    if (it.render) { if (p.level < 1 && !p.failed) queueRender(p); continue; }
+    if (it.kind === "sheet") { if (!p.built) buildSheetEl(p); continue; }
+    if (it.kind === "pdf") { if (p.level < 1 && !p.failed) queueRender(p); continue; }
     const want = sw > 480 ? 2 : 1;
     if (p.level >= want) continue;
     const path = want === 2 ? it.src : it.thumb;
     loadImg(path, (u) => { if (p.level < want) { p.img.src = u; p.level = want; } });
   }
-}
-
-/* ---------------- trang thêm từ PDF mới: vẽ ảnh nhỏ bằng pdf.js ---------------- */
-const renderCache = new Map(); let renderChain = Promise.resolve();
-function queueRender(p) {
-  if (p.rendering) return;
-  const k = keyOf(p.it);
-  if (renderCache.has(k)) { p.img.src = renderCache.get(k); p.level = 1; return; }
-  p.rendering = true;
-  renderChain = renderChain.then(async () => {
-    try {
-      const pdf = await getPdf(p.it.doc), page = await pdf.getPage(p.it.page), v0 = page.getViewport({ scale: 1 }), v = page.getViewport({ scale: 520 / v0.width });
-      const cv = document.createElement("canvas"); cv.width = Math.floor(v.width); cv.height = Math.floor(v.height);
-      const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-      await page.render({ canvasContext: ctx, viewport: v }).promise;
-      const blob = await new Promise((r) => cv.toBlob(r, "image/jpeg", 0.82)), u = URL.createObjectURL(blob);
-      renderCache.set(k, u); if (p.el.isConnected) { p.img.src = u; p.level = 1; }
-    } catch (e) { console.warn("render", e); p.failed = true; }
-    p.rendering = false;
-  });
 }
 
 /* ---------------- PDF gốc: vẽ lại nét khi phóng to ---------------- */
@@ -353,7 +281,7 @@ async function doHi() {
   const cands = [];
   for (const p of pageEls) {
     const it = p.it, d = board.docs[it.doc];
-    if (d.kind !== "pdf" || pdfFail.has(it.doc)) continue;
+    if (!d || d.kind !== "pdf" || it.kind === "sheet" || pdfFail.has(it.doc)) continue;
     const sx = it.x * view.s + view.x, sy = it.y * view.s + view.y, sw = it.w * view.s, sh = it.h * view.s;
     const vw = Math.min(sx + sw, W) - Math.max(sx, 0), vh = Math.min(sy + sh, H) - Math.max(sy, 0);
     if (vw <= 0 || vh <= 0 || sw < 650) { if (p.canvas) dropHi(p); continue; }
@@ -426,12 +354,20 @@ vp.addEventListener("wheel", (e) => {
 }, { passive: false });
 vp.addEventListener("pointerdown", (e) => {
   if (!e.target.closest(".pin")) world.querySelectorAll(".pin.open").forEach((x) => x.classList.remove("open"));
-  if (e.target.closest(".note,.pin") && e.button === 0 && !spaceDown) return;
-  if (!editMode && e.target.closest(".lnk") && e.button === 0 && !spaceDown) return;
+  if (e.button === 0 && !spaceDown) {
+    if (e.target.closest("#world button")) return;
+    if (e.target.closest(".note,.pin")) return;
+    if (e.target.closest(".tx") && !e.target.closest(".txh")) return;
+    if (!editMode && e.target.closest(".lnk")) return;
+  }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (tool === "note" && e.button === 0 && pointers.size === 1) { e.preventDefault(); pointers.delete(e.pointerId); addNoteAt(e); return; }
-  if (tool === "pin" && e.button === 0 && pointers.size === 1) { e.preventDefault(); pointers.delete(e.pointerId); addPinAt(e); return; }
-  if (editMode && me && e.button === 0 && !spaceDown && pointers.size === 1 && editPointerDown(e)) return;
+  if (e.button === 0 && !spaceDown && pointers.size === 1) {
+    if (tool === "note") { e.preventDefault(); pointers.delete(e.pointerId); addNoteAt(e); return; }
+    if (tool === "pin") { e.preventDefault(); pointers.delete(e.pointerId); addPinAt(e); return; }
+    if (DRAW[tool]) { e.preventDefault(); if (!startDraw(e)) pointers.delete(e.pointerId); return; }
+    if (shapePointerDown(e)) return;
+    if (editMode && me && editPointerDown(e)) return;
+  }
   vp.setPointerCapture(e.pointerId);
   if (pointers.size === 1) { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false }; vp.classList.add("panning"); }
   else drag = null;
@@ -459,29 +395,36 @@ window.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") { e.preventDefault(); $("#q").focus(); $("#q").select(); return; }
   if (typing) { if (e.key === "Escape") e.target.blur(); return; }
   if (!$("#modal").classList.contains("hidden")) { if (e.key === "Escape") closeModal(); return; }
-  if (editMode && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
-  if (editMode && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
+  if (me && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+  if (me && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); return; }
+  if (selShape && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteShape(); return; }
   if (editMode && sel.size && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteSelection(); return; }
   if (editMode && sel.size && e.key.startsWith("Arrow")) { e.preventDefault(); nudgeSel(e.key, e.shiftKey ? 100 : 10); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === " ") spaceDown = true;
   if (e.shiftKey && (e.key === "!" || e.code === "Digit1")) { e.preventDefault(); fitAll(); }
   else if (e.key === "v" || e.key === "V") setTool("select");
   else if (e.key === "n" || e.key === "N") setTool("note");
   else if (e.key === "p" || e.key === "P") setTool("pin");
+  else if (e.key === "c" || e.key === "C") setTool("cloud");
+  else if (e.key === "r" || e.key === "R") setTool("rect");
+  else if (e.key === "a" || e.key === "A") setTool("arrow");
+  else if (e.key === "t" || e.key === "T") setTool("text");
+  else if (e.key === "h" || e.key === "H") setTool("hl");
   else if (e.key === "e" || e.key === "E") setEditMode(!editMode);
   else if (e.key === "\\") $("#side").classList.toggle("hidden");
-  else if (e.key === "Escape") { setTool("select"); clearHl(); if (sel.size) { sel.clear(); applySelection(); } }
+  else if (e.key === "Escape") { setTool("select"); clearHl(); if (sel.size) { sel.clear(); applySelection(); } if (selShape) { selShape = null; placeShapes(); } }
   else if (e.key === "Enter" || e.key === "F3") stepResult(e.shiftKey ? -1 : 1);
   else if (e.key === "+" || e.key === "=") zoomAt(1.25, vp.clientWidth / 2, vp.clientHeight / 2);
   else if (e.key === "-") zoomAt(0.8, vp.clientWidth / 2, vp.clientHeight / 2);
 });
 window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; });
 window.addEventListener("resize", apply);
-function setTool(t) { tool = t; document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t)); vp.classList.toggle("tool-note", t === "note" || t === "pin"); }
+function setTool(t) { tool = t; document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t)); vp.classList.toggle("tool-note", t !== "select"); }
 document.querySelectorAll("[data-tool]").forEach((b) => (b.onclick = () => setTool(b.dataset.tool)));
 $("#btnFit").onclick = fitAll;
 $("#btnSide").onclick = () => $("#side").classList.toggle("hidden");
-$("#btnNotes").onclick = () => { world.classList.toggle("hide-notes"); status(world.classList.contains("hide-notes") ? "Đã ẩn ghi chú" : "Hiện ghi chú"); };
+$("#btnNotes").onclick = () => { world.classList.toggle("hide-notes"); status(world.classList.contains("hide-notes") ? "Đã ẩn ghi chú, ghim, hình vẽ" : "Hiện ghi chú, ghim, hình vẽ"); };
 
 /* ---------------- tìm kiếm ---------------- */
 let results = [], cur = -1, hlEls = [];
@@ -534,7 +477,7 @@ async function goResult(i) {
   cur = i; const r = results[i];
   document.querySelectorAll(".res").forEach((e, j) => e.classList.toggle("cur", j === i));
   const row = document.querySelectorAll(".res")[i]; if (row) row.scrollIntoView({ block: "nearest" });
-  const pe = pageEls.find((p) => p.it.doc === r.p.doc && p.it.page === r.p.page); if (!pe) return;
+  const pe = await revealPage(r.p.doc, r.p.page); if (!pe) return;
   clearHl(); pe.el.classList.add("focus");
   const t = await src.text(r.p.doc).catch(() => null);
   const ts = terms($("#q").value);
@@ -670,8 +613,8 @@ function renderWbs() {
     }
   }
 }
-function goPage(doc, page) {
-  const pe = pageEls.find((p) => p.it.doc === doc && p.it.page === page); if (!pe) return status("Không thấy trang này trên bảng", 3000);
+async function goPage(doc, page) {
+  const pe = await revealPage(doc, page); if (!pe) return status("Không thấy trang này trên bảng", 3000);
   clearHl(); pe.el.classList.add("focus"); hlEls.push(pe.el); focusRect(pe.it, 0.04);
 }
 function openWbsItem(id, noFocus) {
@@ -736,99 +679,379 @@ function openWbsItem(id, noFocus) {
   const first = it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page);
 }
 
-/* ---------------- sửa bố cục bảng (kéo / xoá / thêm trang, di chuyển vùng) ---------------- */
-// Bố cục của mỗi người lưu trong file ghi chú của họ (notes[email].layout), không đụng tới board.json gốc.
-// L = { g:{idVung:{x,y,w,h,title,del}}, o:{khoá:{x,y}}, hide:[khoá], add:[mục thêm], ng:[vùng mới], docs:{tài liệu thêm} }
+/* ================= BỐ CỤC 4 CỘT: BOQ · BẢN VẼ · SPEC · CÁC HS KHÁC ================= */
+// Mỗi file = 1 "bộ" (tiêu đề + line đậm + nút ẩn/hiện). File mới trên Drive tự hiện ra.
+// Bố cục sửa riêng của mỗi người: notes[email].layout (v2). Trạng thái ẩn/hiện: notes[email].coll.
 const clone = (o) => JSON.parse(JSON.stringify(o));
-const keyOf = (it) => it.type === "page" ? it.doc + "#" + it.page : it.type === "label" ? "L:" + (it.doc || "") + ":" + it.text : "K:" + it.path;
-const isPageKey = (k) => !/^[LK]:/.test(k);
+const BASE_COLS = [{ id: "BOQ", title: "BOQ" }, { id: "DWG", title: "BẢN VẼ" }, { id: "SPEC", title: "SPEC" }, { id: "OTH", title: "CÁC HS KHÁC" }];
+const K = { colW: 2240, colGap: 160, colHead: 230, pad: 40, setHead: 120, setGap: 50, gap: 15, tableK: 1 };
+const keyOf = (it) => it.type === "link" ? "K:" + it.path : it.doc + "#" + it.page;
+const isPageKey = (k) => !k.startsWith("K:");
 const MK = { red: ["#dc2626", "Cần sửa"], amber: ["#f59e0b", "Cần xem lại"], green: ["#16a34a", "Đã duyệt"], blue: ["#2563eb", "Quan trọng"] };
-function normL(l) { l = l || {}; l.g = l.g || {}; l.o = l.o || {}; l.hide = l.hide || []; l.add = l.add || []; l.ng = l.ng || []; l.docs = l.docs || {}; return l; }
-function hasLayout(d) { const l = d && d.layout; return !!l && (Object.keys(l.g || {}).length + Object.keys(l.o || {}).length + (l.hide || []).length + (l.add || []).length + (l.ng || []).length) > 0; }
-function computeBoard() {
-  const b = clone(baseBoard);
-  if (!L) return b;
-  normL(L);
-  b.groups = b.groups.filter((g) => !(L.g[g.id] && L.g[g.id].del)).map((g) => Object.assign(g, L.g[g.id] || {}));
-  b.groups.push(...L.ng);
-  const hide = new Set(L.hide);
-  b.items = b.items.filter((it) => !hide.has(keyOf(it))).map((it) => { const o = L.o[keyOf(it)]; if (o) { it.x = o.x; it.y = o.y; } return it; });
-  b.items.push(...L.add);
-  Object.assign(b.docs, L.docs);
-  return b;
+const hashStr = (s2) => { let h = 5381; for (let i = 0; i < s2.length; i++) h = ((h << 5) + h + s2.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
+const r1 = (v) => Math.round(v * 10) / 10;
+let files = [], origDone = false, docsAll = {}, SETS = new Map(), coll = {}, pendingIdx = [];
+const docMeta = {}, sheetCache = {}, loadP = new Map(), loadErr = {}, setEls = new Map();
+
+function classify(path, kind) {
+  const p = norm(path);
+  if (/boq|bao gia|du toan|budget|khoi luong|ngan sach/.test(p)) return "BOQ";
+  if (kind === "xlsx") return /tien do|schedule|nhan su|danh sach/.test(p) ? "OTH" : "BOQ";
+  if (/spec|material|finish|furniture|vat lieu|ff&e|catalog/.test(p)) return "SPEC";
+  if (/dwg|drawing|ban ve|\bdd\b|\bsd\b|tkkt|layout|shop ?drawing|mat bang|\b3d\b/.test(p)) return "DWG";
+  return "OTH";
 }
-function rebuildBoard() { board = computeBoard(); build(); applySelection(); renderAnnotations(); }
-function renderAnnotations() { renderNotes(); renderPins(); renderMarks(); }
-function curL() { return layoutOwner === "base" ? null : (notes[layoutOwner] && notes[layoutOwner].layout) || null; }
-function setLayoutOwner(o, quiet) {
+function collectSets() {
+  const S = new Map(), known = new Set(); let ord = 0;
+  const GM = { A: "DWG", F: "DWG", B: "SPEC", C: "OTH", D: "OTH" };
+  docsAll = clone(baseBoard.docs);
+  for (const d of Object.values(baseBoard.docs)) { known.add(d.path); (d.dupes || []).forEach((p) => known.add(typeof p === "string" ? p : p.path)); }
+  for (const it of baseBoard.items) {
+    if (it.type !== "page") continue;
+    const d = baseBoard.docs[it.doc]; let s = S.get(it.doc);
+    if (!s) S.set(it.doc, s = { id: it.doc, title: d.name, path: d.path, kind: "pdf", pre: true, col: GM[d.group] || classify(d.path, "pdf"), ord: ord++, pages: [] });
+    s.pages.push({ page: it.page, w: it.w, h: it.h, src: it.src, thumb: it.thumb });
+  }
+  const addFile = (path, size, mt, isNew) => {
+    if (known.has(path) || /(^|\/)~\$/.test(path) || path.startsWith("_BOARD/")) return;
+    const e = ((path.match(/\.(\w+)$/) || [])[1] || "").toLowerCase();
+    if (!/^(pdf|xlsx|xlsm|xls)$/.test(e)) return;
+    known.add(path);
+    const kind = e === "pdf" ? "pdf" : "xlsx", id = "x" + hashStr(path), name = path.split("/").pop();
+    S.set(id, { id, title: name, path, kind, col: classify(path, kind), ord: ord++, size, mt, isNew });
+    const m = docMeta[id] || cachedMeta(path, mt); if (m) docMeta[id] = m;
+    docsAll[id] = { name, path, pages: m ? m.n : (sheetCache[id] ? sheetCache[id].sheets.length : 0), kind, group: "", dupes: [], scanned: false };
+  };
+  const att = {};
+  for (const it of baseBoard.items) {
+    if (it.type !== "link") continue;
+    if (/^xls/i.test(it.ext)) { addFile(it.path, it.size || 0, "", false); continue; }
+    const g = baseBoard.groups.find((g2) => it.x >= g2.x && it.x <= g2.x + g2.w && it.y >= g2.y && it.y <= g2.y + g2.h);
+    const col = (g && GM[g.id]) || "OTH", id = "att-" + col;
+    if (!att[id]) S.set(id, att[id] = { id, title: "Tệp đính kèm (CAD, ZIP…)", kind: "links", col, ord: 5000 + ord++, links: [] });
+    att[id].links.push(it);
+  }
+  for (const f of [...files].sort((a, b) => a.path.localeCompare(b.path))) addFile(f.path, f.size, f.mt, true);
+  return S;
+}
+function cachedMeta(path, mt) { try { const v = localStorage.getItem("pb_pm:" + path + "|" + (mt || "")); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+function defCollapsed(s) { return (s.kind === "pdf" && !s.pre && (s.size || 0) > 20e6) || (s.kind === "xlsx" && (s.size || 0) > 8e6); }
+const isCollapsed = (s) => (s.id in coll ? !!coll[s.id] : defCollapsed(s));
+
+function normL(l) {
+  if (!l || l.v !== 2) l = { v: 2 };
+  l.cols = l.cols || {}; l.extra = l.extra || []; l.colOrder = l.colOrder || []; l.sets = l.sets || {}; l.o = l.o || {}; l.hide = l.hide || []; l.hideSets = l.hideSets || [];
+  return l;
+}
+function hasLayout(d) { const l = d && d.layout; return !!l && l.v === 2 && (Object.keys(l.cols || {}).length + (l.extra || []).length + (l.colOrder || []).length + Object.keys(l.sets || {}).length + Object.keys(l.o || {}).length + (l.hide || []).length + (l.hideSets || []).length) > 0; }
+function colList() {
+  const l = L || normL(null), ids = [...BASE_COLS.map((c) => c.id), ...l.extra.map((c) => c.id)];
+  const order = l.colOrder.filter((id) => ids.includes(id)); for (const id of ids) if (!order.includes(id)) order.push(id);
+  return order.map((id) => { const b = BASE_COLS.find((c) => c.id === id), x = b || l.extra.find((c) => c.id === id), o = l.cols[id] || {}; return { id, title: o.title || x.title, w: o.w || K.colW, base: !!b }; });
+}
+const setColOf = (s, cols) => { const o = L && L.sets[s.id]; return o && cols.some((c) => c.id === o.col) ? o.col : s.col; };
+const ordOf = (s) => { const o = L && L.sets[s.id]; return o && o.ord != null ? o.ord : s.ord; };
+function rawItems(s, iw) {
+  const fit = (w, h) => { const f = Math.min(1, iw / w); return [r1(w * f), r1(h * f)]; };
+  if (s.kind === "links") return s.links.map((l) => ({ type: "link", path: l.path, name: l.name, ext: l.ext, w: 230, h: 46 }));
+  if (s.pre) return s.pages.map((p) => { const [w, h] = fit(p.w, p.h); return { type: "page", kind: "img", page: p.page, w, h, src: p.src, thumb: p.thumb }; });
+  if (loadErr[s.id]) return null;
+  if (s.kind === "pdf") { const m = docMeta[s.id]; if (!m) return null; return m.sz.map((wh, i) => { const [w, h] = fit(wh[0], wh[1]); return { type: "page", kind: "pdf", page: i + 1, w, h }; }); }
+  const c = sheetCache[s.id]; if (!c) return null;
+  return c.sheets.map((sh, i) => { const k = Math.min(K.tableK, iw / sh.pw); return { type: "page", kind: "sheet", page: i + 1, name: sh.name, w: r1(sh.pw * k), h: r1(sh.ph * k), k, sh }; });
+}
+function layoutBoard() {
+  const cols = colList(), l = L || normL(null), hideS = new Set(l.hideSets), hide = new Set(l.hide), O = l.o;
+  const groups = [], sets = [], items = [], all = [...SETS.values()]; let x = 0;
+  for (const c of cols) {
+    const list = all.filter((s) => !hideS.has(s.id) && setColOf(s, cols) === c.id).sort((a, b) => ordOf(a) - ordOf(b));
+    let y = K.colHead;
+    for (const s of list) {
+      const sx = x + K.pad, sw = c.w - 2 * K.pad, cx = sx + 20, cy = y + K.setHead + 16, iw = sw - 40;
+      const st = { id: s.id, s, x: sx, y, w: sw, col: c.id, cx, cy, collapsed: isCollapsed(s), state: "ok", n: 0 };
+      let h = K.setHead;
+      if (!st.collapsed) {
+        const raw = rawItems(s, iw);
+        if (!raw) { st.state = loadErr[s.id] ? "err" : "need"; h = K.setHead + 180; }
+        else {
+          let rx = 0, ry = 0, rh = 0, bottom = 0;
+          for (const r of raw) {
+            r.doc = s.id; const key = keyOf(r);
+            if (hide.has(key)) continue;
+            if (rx > 0 && rx + r.w > iw) { rx = 0; ry += rh + K.gap; rh = 0; }
+            let px = rx, py = ry; rx += r.w + K.gap; rh = Math.max(rh, r.h);
+            const o = O[key]; if (o) { px = o.x; py = o.y; }
+            Object.assign(r, { x: r1(cx + px), y: r1(cy + py), ox: cx, oy: cy, set: s.id });
+            items.push(r); bottom = Math.max(bottom, py + r.h); st.n++;
+          }
+          h = Math.max(K.setHead + 16 + bottom + 30, K.setHead + 70);
+        }
+      }
+      st.h = h; sets.push(st); y += h + K.setGap;
+    }
+    groups.push({ id: c.id, title: c.title, base: c.base, x, y: 0, w: c.w, h: Math.max(y + K.pad, 1600) });
+    x += c.w + K.colGap;
+  }
+  return { groups, sets, items };
+}
+function rebuildBoard() {
+  SETS = collectSets();
+  const lay = layoutBoard();
+  board = { project: baseBoard.project, docs: docsAll, groups: lay.groups, sets: lay.sets, items: lay.items };
+  build(); applySelection(); renderAnnotations();
+  for (const st of board.sets) if (st.state === "need") ensureLoaded(st.s);
+}
+let rbT = 0;
+function scheduleRebuild() {
+  clearTimeout(rbT);
+  rbT = setTimeout(() => { const a = document.activeElement; if (eDrag || (a && world.contains(a) && a.isContentEditable)) return scheduleRebuild(); rebuildBoard(); }, 150);
+}
+function infoText(st) {
+  const s = st.s; let t;
+  if (s.kind === "links") t = s.links.length + " tệp";
+  else if (s.kind === "xlsx") t = sheetCache[s.id] ? sheetCache[s.id].sheets.length + " sheet" : "Excel";
+  else t = (docsAll[s.id] && docsAll[s.id].pages ? docsAll[s.id].pages + " trang" : "PDF");
+  if (s.size && !s.pre) t += " · " + (s.size / 1048576).toFixed(1) + " MB";
+  if (st.collapsed) t += " · đang ẩn";
+  return t;
+}
+
+/* ----- dựng phần tử trên bảng ----- */
+function build() {
+  world.innerHTML = ""; pageEls.length = 0; nodeEls.clear(); setEls.clear();
+  const B = (cls, txt, title, fn) => { const b = el("button", cls, txt); b.title = title; b.onclick = fn; return b; };
+  for (const g of board.groups) {
+    const d = el("div", "grp"); d.dataset.gid = g.id; Object.assign(d.style, { left: g.x + "px", top: g.y + "px", width: g.w + "px", height: g.h + "px" });
+    d.appendChild(el("div", "gt", g.title));
+    const c = el("div", "gctl");
+    c.append(B(null, "⊟ Ẩn hết", "Ẩn tất cả các bộ trong vùng này", () => collapseCol(g.id, true)), B(null, "⊞ Hiện hết", "Hiện tất cả các bộ trong vùng này", () => collapseCol(g.id, false)));
+    c.append(B("eo", "✎", "Đổi tên vùng", () => renameCol(g.id)));
+    if (!g.base) c.append(B("eo danger", "✕", "Xoá vùng (các bộ bên trong trở về vùng mặc định)", () => deleteCol(g.id)));
+    const gm = el("div", "gm eo", "✥"); gm.title = "Kéo để đổi thứ tự vùng";
+    c.prepend(gm); d.appendChild(c);
+    const gw = el("div", "gw eo"); gw.title = "Kéo để đổi độ rộng vùng"; d.appendChild(gw);
+    world.appendChild(d);
+  }
+  for (const st of board.sets) {
+    const d = el("div", "set" + (st.collapsed ? " col" : "")); d.dataset.sid = st.id;
+    Object.assign(d.style, { left: st.x + "px", top: st.y + "px", width: st.w + "px", height: st.h + "px" });
+    const h = el("div", "sh"); h.title = st.s.path || "";
+    h.appendChild(B("tg", st.collapsed ? "▸ Hiện" : "▾ Ẩn", st.collapsed ? "Hiện bộ hồ sơ này" : "Ẩn bộ này (chỉ còn tiêu đề) cho nhẹ bảng", () => toggleSet(st.id)));
+    h.appendChild(el("b", null, st.s.title));
+    if (st.s.isNew) h.appendChild(el("span", "new", "MỚI"));
+    h.appendChild(el("small", null, infoText(st)));
+    const bs = el("span", "sb");
+    if (st.s.path) bs.appendChild(B(null, "📂", "Mở file gốc trên Drive", () => openPath(st.s.path)));
+    bs.appendChild(B("eo danger", "✕", "Gỡ bộ này khỏi bảng (khôi phục được)", () => removeSet(st.id)));
+    h.appendChild(bs); d.appendChild(h);
+    if (!st.collapsed && st.state !== "ok") d.appendChild(el("div", "ph", st.state === "err" ? "⚠ Không đọc được file: " + loadErr[st.id] : "Đang tải " + (st.s.kind === "xlsx" ? "Excel" : "PDF") + "…"));
+    world.appendChild(d); setEls.set(st.id, { st, el: d });
+  }
+  for (const it of board.items) {
+    const k = keyOf(it);
+    if (it.type === "page") {
+      const d = el("div", "pg" + (it.kind === "sheet" ? " sheet" : "")); Object.assign(d.style, { left: it.x + "px", top: it.y + "px", width: it.w + "px", height: it.h + "px" });
+      d.dataset.doc = it.doc; d.dataset.page = it.page; d.dataset.k = k;
+      const img = el("img"); img.alt = ""; img.draggable = false; if (it.kind !== "sheet") d.appendChild(img);
+      d.appendChild(el("span", "pn", it.kind === "sheet" ? it.name : it.page + "/" + ((board.docs[it.doc] || {}).pages || "?")));
+      world.appendChild(d); pageEls.push({ it, el: d, img, level: 0, want: 0 });
+      nodeEls.set(k, { it, el: d });
+    } else {
+      const d = el("div", "lnk"); Object.assign(d.style, { left: it.x + "px", top: it.y + "px", width: it.w + "px", height: it.h + "px" });
+      d.dataset.path = it.path; d.dataset.k = k; d.title = it.path + "\n(bấm để mở)";
+      if (origDone && src.has && !src.has(it.path)) d.classList.add("nf");
+      d.appendChild(el("span", "ext " + it.ext, it.ext)); d.appendChild(el("span", "nm", it.name));
+      d.addEventListener("click", () => { if (editMode) return; openPath(it.path); });
+      world.appendChild(d); nodeEls.set(k, { it, el: d });
+    }
+  }
+  const g2 = el("div"); g2.id = "insbar"; g2.className = "hidden"; world.appendChild(g2);
+  buildToc(); apply();
+}
+function openPath(p) { const u = src.openUrl(p); if (u) window.open(u, "_blank"); else status("Chưa tìm thấy file trên Drive (đang đồng bộ?)", 4000); }
+function buildToc() {
+  const toc = $("#toc"); toc.innerHTML = "";
+  for (const g of board.groups) {
+    const box = el("div", "tg"), h = el("div", "th", g.title); h.onclick = () => focusRect(g, 0.02); box.appendChild(h);
+    for (const st of board.sets.filter((t) => t.col === g.id)) {
+      const r = el("div", "td" + (st.collapsed ? " off" : "")), eye = el("span", "eye", st.collapsed ? "▸" : "▾");
+      eye.title = st.collapsed ? "Hiện bộ này" : "Ẩn bộ này"; eye.onclick = (ev) => { ev.stopPropagation(); toggleSet(st.id); };
+      r.append(eye, document.createTextNode(" " + st.s.title + " "), el("small", null, infoText(st)));
+      r.title = st.s.path || ""; r.onclick = () => { if (st.collapsed) { coll[st.id] = false; saveColl(); rebuildBoard(); } const t = board.sets.find((x) => x.id === st.id); if (t) focusRect(t, 0.03); };
+      box.appendChild(r);
+    }
+    toc.appendChild(box);
+  }
+}
+function saveColl() {
+  if (me) { myNotes().coll = coll; queueSave(); }
+  try { localStorage.setItem("pb_coll", JSON.stringify(coll)); } catch (e) {}
+}
+function toggleSet(id) { const s = SETS.get(id); if (!s) return; coll[id] = !isCollapsed(s); saveColl(); rebuildBoard(); }
+function collapseCol(gid, v) { for (const st of board.sets) if (st.col === gid) coll[st.id] = v; saveColl(); rebuildBoard(); status(v ? "Đã ẩn các bộ trong vùng" : "Đã hiện các bộ trong vùng", 2000); }
+async function revealPage(doc, page) {
+  const s = SETS.get(doc); if (!s) return null;
+  if (L && L.hideSets.includes(doc)) { status("Bộ này đang bị gỡ khỏi bảng (khôi phục trong chế độ Sửa bảng)", 4000); return null; }
+  if (isCollapsed(s)) { coll[doc] = false; saveColl(); rebuildBoard(); }
+  let pe = pageEls.find((p) => p.it.doc === doc && p.it.page === page);
+  if (!pe && !s.pre) { await ensureLoaded(s); rebuildBoard(); pe = pageEls.find((p) => p.it.doc === doc && p.it.page === page); }
+  return pe || null;
+}
+
+/* ----- nạp PDF mới / Excel ----- */
+function ensureLoaded(s) {
+  if (loadP.has(s.id)) return loadP.get(s.id);
+  const p = (async () => {
+    try { if (s.kind === "xlsx") await loadSheets(s); else await loadPdfMeta(s); }
+    catch (e) { loadErr[s.id] = e.message || String(e); console.warn(e); }
+    scheduleRebuild();
+  })();
+  loadP.set(s.id, p); return p;
+}
+async function loadPdfMeta(s) {
+  const pdf = await getPdf(s.id), n = Math.min(pdf.numPages, 300), sz = [];
+  for (let i = 1; i <= n; i++) { const v = (await pdf.getPage(i)).getViewport({ scale: 1 }); sz.push([r1(v.width * 0.3528), r1(v.height * 0.3528)]); }
+  docMeta[s.id] = { n: pdf.numPages, sz };
+  try { localStorage.setItem("pb_pm:" + s.path + "|" + (s.mt || ""), JSON.stringify(docMeta[s.id])); } catch (e) {}
+}
+let xlsxLib = null;
+function loadXlsxLib() {
+  if (window.XLSX) return Promise.resolve();
+  return xlsxLib || (xlsxLib = new Promise((res, rej) => { const sc = document.createElement("script"); sc.src = "lib/xlsx.full.min.js?v=1"; sc.onload = res; sc.onerror = () => rej(new Error("không tải được thư viện Excel")); document.head.appendChild(sc); }));
+}
+function sheetRender(ws, name) {
+  const ref = ws["!ref"]; if (!ref) return null;
+  const r = XLSX.utils.decode_range(ref), R = Math.min(r.e.r, r.s.r + 599), C = Math.min(r.e.c, r.s.c + 39);
+  ws["!ref"] = XLSX.utils.encode_range({ s: r.s, e: { r: R, c: C } });
+  let html = XLSX.utils.sheet_to_html(ws, { header: "", footer: "" });
+  const text = XLSX.utils.sheet_to_csv(ws, { FS: " ", blankrows: false });
+  ws["!ref"] = ref;
+  const cols = ws["!cols"] || []; let cg = "<colgroup>", tw = 0;
+  for (let c = r.s.c; c <= C; c++) { const o = cols[c] || {}; let w = o.hidden ? 2 : (o.wpx || (o.wch ? Math.round(o.wch * 7 + 5) : (o.width ? Math.round(o.width * 7) : 64))); w = Math.max(2, Math.min(w, 600)); cg += `<col style="width:${w}px">`; tw += w; }
+  const more = (r.e.r > R ? ` · hiện ${R - r.s.r + 1}/${r.e.r - r.s.r + 1} dòng` : "") + (r.e.c > C ? ` · ${C - r.s.c + 1}/${r.e.c - r.s.c + 1} cột` : "");
+  html = html.replace(/ id="sjs-[^"]*"/g, "").replace(/ data-v="[^"]*"/g, "").replace(/^[\s\S]*?<table[^>]*>/, `<table class="xt" style="width:${tw}px"><caption>${esc(name)}<small>${more}</small></caption>${cg}</colgroup>`);
+  return { html, text };
+}
+async function loadSheets(s) {
+  await loadXlsxLib();
+  const buf = await src.pdfData(s.path);
+  const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellStyles: true });
+  let m = $("#xm"); if (!m) { m = el("div"); m.id = "xm"; document.body.appendChild(m); }
+  const out = [];
+  wb.SheetNames.forEach((name, i) => {
+    const info = wb.Workbook && wb.Workbook.Sheets && wb.Workbook.Sheets[i]; if (info && info.Hidden) return;
+    const r = sheetRender(wb.Sheets[name], name); if (!r) return;
+    m.innerHTML = r.html; const t = m.firstChild;
+    out.push({ name, html: r.html, pw: Math.ceil(t.offsetWidth), ph: Math.ceil(t.offsetHeight), text: r.text });
+  });
+  m.innerHTML = "";
+  sheetCache[s.id] = { sheets: out };
+  addIndex(out.map((sh, i) => { const text = (s.title + " · " + sh.name + "\n" + sh.text).normalize("NFC"); return { doc: s.id, page: i + 1, text, n: normC(text) }; }));
+}
+function addIndex(arr) { if (index) index.push(...arr); else pendingIdx.push(...arr); }
+function buildSheetEl(p) {
+  const it = p.it, w = el("div", "xw"); w.style.width = it.sh.pw + "px"; w.style.transform = `scale(${it.k})`; w.innerHTML = it.sh.html;
+  p.el.insertBefore(w, p.el.firstChild); p.built = true;
+}
+
+/* ----- thumbnail trang PDF mới (pdf.js) ----- */
+const renderCache = new Map(); let renderChain = Promise.resolve();
+function queueRender(p) {
+  if (p.rendering) return;
+  const k = keyOf(p.it);
+  if (renderCache.has(k)) { p.img.src = renderCache.get(k); p.level = 1; return; }
+  p.rendering = true;
+  renderChain = renderChain.then(async () => {
+    try {
+      const pdf = await getPdf(p.it.doc), page = await pdf.getPage(p.it.page), v0 = page.getViewport({ scale: 1 }), v = page.getViewport({ scale: 520 / v0.width });
+      const cv = document.createElement("canvas"); cv.width = Math.floor(v.width); cv.height = Math.floor(v.height);
+      const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: ctx, viewport: v }).promise;
+      const blob = await new Promise((r) => cv.toBlob(r, "image/jpeg", 0.82)), u = URL.createObjectURL(blob);
+      renderCache.set(k, u); if (p.el.isConnected) { p.img.src = u; p.level = 1; }
+    } catch (e) { console.warn("render", e); p.failed = true; }
+    p.rendering = false;
+  });
+}
+
+/* ----- bố cục của ai ----- */
+function renderAnnotations() { renderNotes(); renderPins(); renderMarks(); renderShapes(); }
+function curL() { if (layoutOwner === "base") return null; const d = notes[layoutOwner]; return d && d.layout && d.layout.v === 2 ? normL(d.layout) : null; }
+function setLayoutOwner(o) {
   if (editMode && !(me && o === me.email)) setEditMode(false);
-  layoutOwner = o; L = curL();
+  layoutOwner = o; L = curL(); if (me && o === me.email && !L) { myNotes().layout = L = normL(null); }
   try { localStorage.setItem("pb_layout", o === "base" ? "base" : (me && o === me.email ? "me" : o)); } catch (e) {}
   rebuildBoard(); renderLayoutSel();
-  if (!quiet) status(o === "base" ? "Đang xem bố cục gốc" : "Đang xem bố cục của " + (me && o === me.email ? "bạn" : (notes[o].author || o)), 2500);
+  status(o === "base" ? "Đang xem bố cục mặc định" : "Đang xem bố cục của " + (me && o === me.email ? "bạn" : (notes[o].author || o)), 2500);
 }
 function renderLayoutSel() {
-  const s = $("#layoutSel"); if (!s) return; s.innerHTML = "";
+  const s = $("#layoutSel"); s.innerHTML = "";
   const add = (v, t) => { const o = el("option", null, t); o.value = v; s.appendChild(o); };
-  add("base", "Bố cục gốc");
+  add("base", "Bố cục mặc định");
   if (me) add(me.email, "Bố cục của tôi");
   for (const [owner, d] of Object.entries(notes)) if (hasLayout(d) && !(me && owner === me.email)) add(owner, "Bố cục: " + (d.author || owner));
   s.value = layoutOwner; if (s.value !== layoutOwner) s.value = "base";
   s.classList.toggle("hidden", !board);
 }
 function initLayoutAfterNotes() {
-  let want = "base";
-  try { want = localStorage.getItem("pb_layout") || ""; } catch (e) {}
+  let want = "base"; try { want = localStorage.getItem("pb_layout") || ""; } catch (e) {}
   const mineHas = me && hasLayout(notes[me.email]);
   if (want === "base") layoutOwner = "base";
   else if (want && want !== "me" && notes[want] && hasLayout(notes[want])) layoutOwner = want;
   else layoutOwner = mineHas ? me.email : "base";
   L = curL();
-  rebuildBoard(); renderLayoutSel();
-  if (layoutOwner !== "base") status("Đang dùng " + (me && layoutOwner === me.email ? "bố cục của bạn" : "bố cục của " + (notes[layoutOwner].author || layoutOwner)) + " (đổi ở ô Bố cục trên thanh công cụ)", 4000);
+  if (me && notes[me.email] && notes[me.email].coll) coll = notes[me.email].coll;
+  rebuildBoard(); renderLayoutSel(); histReset();
 }
 $("#layoutSel").onchange = (e) => setLayoutOwner(e.target.value);
 
-/* ----- lịch sử hoàn tác ----- */
+/* ----- hoàn tác (bố cục + hình vẽ của tôi) ----- */
 let hist = [], hpos = 0;
+function snap0() { const m = me ? myNotes() : {}; return JSON.stringify({ L: m.layout && m.layout.v === 2 ? m.layout : null, S: m.shapes || [] }); }
+function histReset() { hist = [snap0()]; hpos = 0; renderEditBar(); }
 function commit() {
-  hist = hist.slice(0, hpos + 1); hist.push(JSON.stringify(L)); hpos = hist.length - 1;
-  if (hist.length > 80) { hist.shift(); hpos--; }
+  hist = hist.slice(0, hpos + 1); hist.push(snap0()); hpos = hist.length - 1;
+  if (hist.length > 100) { hist.shift(); hpos--; }
   queueSave(); renderEditBar(); renderLayoutSel();
 }
-function restoreHist() { L = normL(JSON.parse(hist[hpos])); myNotes().layout = L; rebuildBoard(); queueSave(); renderEditBar(); }
+function restoreHist() {
+  const o = JSON.parse(hist[hpos]), m = myNotes();
+  m.shapes = o.S;
+  if (me && layoutOwner === me.email) m.layout = L = normL(o.L); else m.layout = o.L;
+  selShape = null; rebuildBoard(); queueSave(); renderEditBar();
+}
 function undo() { if (hpos > 0) { hpos--; restoreHist(); } }
 function redo() { if (hpos < hist.length - 1) { hpos++; restoreHist(); } }
 function renderEditBar() { $("#eUndo").disabled = hpos <= 0; $("#eRedo").disabled = hpos >= hist.length - 1; }
 
-/* ----- bật / tắt chế độ sửa ----- */
-function becomeMine() {
-  myNotes().layout = L = normL(L ? clone(L) : {});
-  layoutOwner = me.email; rebuildBoard(); renderLayoutSel();
-}
+/* ----- chế độ sửa bảng ----- */
 function setEditMode(on) {
   if (on) {
     if (!me) return status("Cần đăng nhập Google để sửa bố cục", 3000);
-    if (layoutOwner !== me.email) becomeMine();
-    L = normL(myNotes().layout); myNotes().layout = L; hist = [JSON.stringify(L)]; hpos = 0;
+    if (layoutOwner !== me.email) { myNotes().layout = L = normL(L ? clone(L) : null); layoutOwner = me.email; renderLayoutSel(); histReset(); }
     setTool("select");
   }
   editMode = on; document.body.classList.toggle("editing", on);
   $("#editbar").classList.toggle("hidden", !on); $("#btnEdit").classList.toggle("on", on);
-  renderEditBar(); renderSelBar();
-  status(on ? "Kéo trang/vùng · quét khung chọn nhiều · Delete xoá · Ctrl+Z hoàn tác · Space+kéo để cuộn" : "Đã thoát chế độ sửa", on ? 7000 : 2000);
+  rebuildBoard(); renderEditBar(); renderSelBar();
+  status(on ? "Kéo trang · kéo tiêu đề bộ để đổi chỗ · ✥ đổi thứ tự vùng · quét khung chọn nhiều · Delete gỡ · Ctrl+Z" : "Đã thoát chế độ sửa", on ? 7000 : 2000);
 }
 $("#btnEdit").onclick = () => setEditMode(!editMode);
 $("#eDone").onclick = () => setEditMode(false);
 $("#eUndo").onclick = undo; $("#eRedo").onclick = redo;
-$("#eAdd").onclick = () => openAddDialog();
-$("#eGroup").onclick = () => addGroup();
-$("#eReset").onclick = () => {
-  if (!confirm("Đưa bảng về bố cục gốc? Mọi chỗ bạn đã kéo/xoá/thêm sẽ mất (có thể Ctrl+Z ngay sau đó).")) return;
-  L = normL({}); myNotes().layout = L; commit(); rebuildBoard();
-};
+$("#eAdd").onclick = () => openRestore();
+$("#eGroup").onclick = () => { L.extra.push({ id: "Z" + Date.now().toString(36), title: "Vùng mới" }); commit(); rebuildBoard(); status("Đã thêm vùng mới ở cuối bảng – kéo tiêu đề bộ hồ sơ vào đó", 4000); };
+$("#eReset").onclick = () => { if (!confirm("Đưa bảng về bố cục mặc định 4 vùng? (Ctrl+Z để hoàn tác)")) return; myNotes().layout = L = normL(null); commit(); rebuildBoard(); };
+function renameCol(id) { const g = board.groups.find((x) => x.id === id); const v = prompt("Tên vùng:", g.title); if (v == null || !v.trim()) return; L.cols[id] = Object.assign(L.cols[id] || {}, { title: v.trim() }); commit(); rebuildBoard(); }
+function deleteCol(id) {
+  const g = board.groups.find((x) => x.id === id); if (!confirm("Xoá vùng “" + g.title + "”? Các bộ hồ sơ bên trong trở về vùng mặc định của chúng.")) return;
+  L.extra = L.extra.filter((c) => c.id !== id); delete L.cols[id]; L.colOrder = L.colOrder.filter((c) => c !== id);
+  for (const [k, v] of Object.entries(L.sets)) if (v.col === id) delete L.sets[k];
+  commit(); rebuildBoard();
+}
+function removeSet(id) { const s = SETS.get(id); if (!confirm("Gỡ bộ “" + s.title + "” khỏi bảng?\n(File gốc không bị xoá; khôi phục bằng nút ↺ Khôi phục.)")) return; L.hideSets.push(id); commit(); rebuildBoard(); }
 
-/* ----- chọn mục ----- */
+/* ----- chọn trang ----- */
 let lastClick = { k: "", t: 0 };
 function registerClick(k) { const now = performance.now(), dbl = lastClick.k === k && now - lastClick.t < 400; lastClick = dbl ? { k: "", t: 0 } : { k, t: now }; return dbl; }
 function boardClick(e) {
@@ -843,12 +1066,9 @@ function boardClick(e) {
 function paintSel() { for (const [k, n] of nodeEls) n.el.classList.toggle("sel", sel.has(k)); }
 function applySelection() { for (const k of [...sel]) if (!nodeEls.has(k)) sel.delete(k); paintSel(); renderSelBar(); }
 const selNodes = () => [...sel].map((k) => nodeEls.get(k)).filter(Boolean);
-const boxOf = (n) => ({ x: n.it.x, y: n.it.y, w: n.it.w || n.el.offsetWidth, h: n.it.h || n.el.offsetHeight });
-function moveNode(n, x, y) { n.it.x = Math.round(x * 10) / 10; n.it.y = Math.round(y * 10) / 10; n.el.style.left = n.it.x + "px"; n.el.style.top = n.it.y + "px"; }
-function recordMoves(ns) { for (const n of ns) { if (!n.it.add) L.o[keyOf(n.it)] = { x: n.it.x, y: n.it.y }; } }
-function viewCenter() { return { x: (vp.clientWidth / 2 - view.x) / view.s, y: (vp.clientHeight / 2 - view.y) / view.s }; }
-
-/* ----- thanh thao tác khi có mục được chọn ----- */
+const boxOf = (n) => ({ x: n.it.x, y: n.it.y, w: n.it.w, h: n.it.h });
+function moveNode(n, x, y) { n.it.x = r1(x); n.it.y = r1(y); n.el.style.left = n.it.x + "px"; n.el.style.top = n.it.y + "px"; }
+function recordMoves(ns) { for (const n of ns) L.o[keyOf(n.it)] = { x: r1(n.it.x - n.it.ox), y: r1(n.it.y - n.it.oy) }; }
 function renderSelBar() {
   const bar = $("#selbar"); bar.innerHTML = "";
   if (!sel.size) { bar.classList.add("hidden"); return; }
@@ -858,7 +1078,7 @@ function renderSelBar() {
   const btn = (txt, title, fn, cls) => { const b = el("button", cls || null, txt); b.title = title; b.onclick = fn; bar.appendChild(b); return b; };
   if (pk.length === 1) {
     btn("🔍", "Phóng to trang này", () => { const n = nodeEls.get(pk[0]); if (n) focusRect(n.it, 0.04); });
-    btn("📄 PDF gốc", "Mở file PDF gốc trên Drive", () => openOriginal(pk[0]));
+    btn("📂 File gốc", "Mở file gốc trên Drive", () => { const d = board.docs[pk[0].split("#")[0]]; if (d) openPath(d.path); });
   }
   if (pk.length) {
     const sw = el("span", "sw");
@@ -870,37 +1090,31 @@ function renderSelBar() {
   if (editMode) {
     bar.appendChild(el("span", "sep"));
     btn("⇤", "Căn trái", () => alignSel("l")); btn("⤒", "Căn trên", () => alignSel("t"));
-    btn("↔", "Dàn đều theo chiều ngang", () => alignSel("h")); btn("↕", "Dàn đều theo chiều dọc", () => alignSel("v"));
+    btn("↔", "Dàn đều ngang", () => alignSel("h")); btn("↕", "Dàn đều dọc", () => alignSel("v"));
     btn("▦", "Xếp lưới…", gridSel);
-    btn("🗑", "Xoá khỏi bảng (Delete) – file gốc không bị xoá", deleteSelection, "danger");
+    btn("↺", "Trả về vị trí tự động trong bộ", () => { for (const k of keys) delete L.o[k]; commit(); rebuildBoard(); });
+    btn("🗑", "Gỡ khỏi bảng (Delete) – file gốc không bị xoá", deleteSelection, "danger");
   }
   btn("✕", "Bỏ chọn (Esc)", () => { sel.clear(); applySelection(); });
 }
-function openOriginal(k) {
-  const [doc, page] = k.split("#"), d = board.docs[doc]; if (!d) return;
-  const u = src.openUrl(d.path);
-  if (u) window.open(u + (src.kind === "local" ? "#page=" + page : ""), "_blank"); else status("Chưa tìm thấy file trên Drive (đang đồng bộ?)", 4000);
-}
 
-/* ----- đánh dấu màu (mọi người cùng thấy) ----- */
+/* ----- đánh dấu màu ----- */
 function markOf(k) { let r = null; for (const [owner, d] of Object.entries(notes)) { const c = d.marks && d.marks[k]; if (c) { if (me && owner === me.email) return c; r = r || c; } } return r; }
 function setMark(keys, c) {
   if (!me) return status("Cần đăng nhập để đánh dấu", 3000);
   const m = (myNotes().marks = myNotes().marks || {});
   for (const k of keys) { if (c) m[k] = c; else delete m[k]; }
-  queueSave(); renderMarks();
-  status(c ? "Đã đánh dấu " + keys.length + " trang: " + MK[c][1] : "Đã bỏ đánh dấu", 2000);
+  queueSave(); renderMarks(); status(c ? "Đã đánh dấu " + keys.length + " trang: " + MK[c][1] : "Đã bỏ đánh dấu", 2000);
 }
 function renderMarks() {
   for (const [k, n] of nodeEls) {
     if (!isPageKey(k)) continue;
     const c = markOf(k);
-    if (c && MK[c]) { n.el.dataset.mark = c; n.el.style.setProperty("--mk", MK[c][0]); n.el.title = MK[c][1]; }
-    else { delete n.el.dataset.mark; n.el.style.removeProperty("--mk"); n.el.removeAttribute("title"); }
+    if (c && MK[c]) { n.el.dataset.mark = c; n.el.style.setProperty("--mk", MK[c][0]); } else { delete n.el.dataset.mark; n.el.style.removeProperty("--mk"); }
   }
 }
 
-/* ----- ghim lên trang ----- */
+/* ----- ghim ----- */
 let pinEls = [];
 function renderPins() {
   world.querySelectorAll(".pin").forEach((e) => e.remove()); pinEls = [];
@@ -914,8 +1128,7 @@ function renderPins() {
       t.addEventListener("input", () => { pn.text = t.innerText; pn.t = new Date().toISOString(); queueSave(); });
       pb.appendChild(t); pb.appendChild(el("div", "au", (d.author || owner) + " · " + (pn.t || "").slice(0, 10)));
       if (mine) { const del = el("button", "del", "✕"); del.title = "Xoá ghim"; del.onclick = () => { if (!confirm("Xoá ghim này?")) return; d.pins = d.pins.filter((x) => x !== pn); renderPins(); queueSave(); }; pb.appendChild(del); }
-      box.appendChild(pb);
-      box.firstChild.onclick = () => box.classList.toggle("open");
+      box.appendChild(pb); box.firstChild.onclick = () => box.classList.toggle("open");
       world.appendChild(box); pinEls.push({ el: box, pn });
     }
   }
@@ -932,49 +1145,172 @@ function addPinAt(e) {
   queueSave();
 }
 
-/* ----- kéo thả khi sửa bố cục ----- */
+/* ----- hình vẽ: đám mây, chữ nhật, mũi tên, chữ, highlight ----- */
+const DRAW = { cloud: 1, rect: 1, arrow: 1, text: 1, hl: 1 };
+const COLORS = ["#dc2626", "#f97316", "#facc15", "#16a34a", "#2563eb", "#9333ea", "#111827"];
+let curColor = localStorage.getItem("pb_color") || COLORS[0], selShape = null, drawTmp = null;
+(function initColors() {
+  const box = $("#colors");
+  for (const c of COLORS) { const i = el("i"); i.style.background = c; i.dataset.c = c; i.title = "Màu nét"; i.onclick = () => pickColor(c); box.appendChild(i); }
+  paintColors();
+})();
+function paintColors() { document.querySelectorAll("#colors i").forEach((i) => i.classList.toggle("on", i.dataset.c === curColor)); }
+function pickColor(c) {
+  curColor = c; try { localStorage.setItem("pb_color", c); } catch (e) {} paintColors();
+  const s = selShape && myShapes().find((x) => x.id === selShape); if (s) { s.c = c; commit(); renderShapes(); }
+}
+function myShapes() { const m = myNotes(); return (m.shapes = m.shapes || []); }
+function allShapes() { const o = []; for (const [owner, d] of Object.entries(notes)) for (const sh of d.shapes || []) o.push({ sh, owner, d, mine: !!me && owner === me.email }); return o; }
+function geo(sh) {
+  const n = sh.k ? nodeEls.get(sh.k) : null; if (sh.k && !n) return null;
+  const tr = (x, y) => n ? [n.it.x + x * n.it.w, n.it.y + y * n.it.h] : [x, y];
+  const [x0, y0] = tr(sh.p[0], sh.p[1]); if (sh.t === "text") return { x0, y0 };
+  const [x1, y1] = tr(sh.p[2], sh.p[3]); return { x0, y0, x1, y1 };
+}
+function cloudPath(x0, y0, x1, y1, r) {
+  const Lx = Math.min(x0, x1), T = Math.min(y0, y1), R = Math.max(x0, x1), Bt = Math.max(y0, y1), pts = [];
+  const edge = (ax, ay, bx, by) => { const n = Math.max(1, Math.round(Math.hypot(bx - ax, by - ay) / (2 * r))); for (let i = 1; i <= n; i++) pts.push([ax + (bx - ax) * i / n, ay + (by - ay) * i / n]); };
+  edge(Lx, T, R, T); edge(R, T, R, Bt); edge(R, Bt, Lx, Bt); edge(Lx, Bt, Lx, T);
+  let d = `M${r1(Lx)},${r1(T)}`, px = Lx, py = T;
+  for (const [x, y] of pts) { const c = r1(Math.hypot(x - px, y - py) / 2 * 1.15); d += ` A${c},${c} 0 0 1 ${r1(x)},${r1(y)}`; px = x; py = y; }
+  return d + "Z";
+}
+function shapeSvg(sh, g, sid, cls) {
+  const c = /^#[0-9a-f]{3,8}$/i.test(sh.c) ? sh.c : "#dc2626", w = sh.w || 3;
+  const Lx = Math.min(g.x0, g.x1), T = Math.min(g.y0, g.y1), W = Math.abs(g.x1 - g.x0), H = Math.abs(g.y1 - g.y0);
+  let d;
+  if (sh.t === "rect" || sh.t === "hl") d = `M${Lx},${T}h${W}v${H}h${-W}Z`;
+  else if (sh.t === "cloud") d = cloudPath(g.x0, g.y0, g.x1, g.y1, Math.max(w * 5, Math.min(W, H) / 10, 4));
+  else { const a = Math.atan2(g.y1 - g.y0, g.x1 - g.x0), hl = Math.max(w * 5, 10); const h1 = [g.x1 - hl * Math.cos(a - 0.45), g.y1 - hl * Math.sin(a - 0.45)], h2 = [g.x1 - hl * Math.cos(a + 0.45), g.y1 - hl * Math.sin(a + 0.45)]; d = `M${g.x0},${g.y0}L${g.x1},${g.y1}M${h1}L${g.x1},${g.y1}L${h2}`; }
+  const vis = sh.t === "hl" ? `<path d="${d}" fill="${c}" fill-opacity=".33" stroke="none"/>` : `<path d="${d}" fill="none" stroke="${c}" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const hit = sid ? `<path class="hit" data-sid="${sid}" d="${d}" fill="${sh.t === "hl" ? "transparent" : "none"}" stroke="transparent" stroke-width="${w * 4 + 6}"/>` : "";
+  const box = cls === "on" ? `<rect class="sbox" x="${Lx - w * 2}" y="${T - w * 2}" width="${W + w * 4}" height="${H + w * 4}"/>` : "";
+  return `<g class="${cls || ""}">${vis}${hit}${box}</g>`;
+}
+function renderShapes() {
+  world.querySelectorAll(".shp,.tx").forEach((e) => e.remove());
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"); svg.setAttribute("class", "shp"); svg.setAttribute("width", "1"); svg.setAttribute("height", "1"); world.appendChild(svg);
+  for (const { sh, owner, d, mine } of allShapes()) {
+    if (sh.t !== "text") continue;
+    const box = el("div", "tx" + (mine ? " mine" : "")); box.dataset.sid = sh.id; box.style.color = sh.c; box.style.transform = `scale(${sh.fs || 1})`;
+    if (mine) { const hd = el("span", "txh", "⠿"); hd.title = "Kéo để di chuyển chữ"; box.appendChild(hd); }
+    const t = el("div", "tt"); t.textContent = sh.text || ""; t.contentEditable = mine ? "true" : "false"; t.title = (d.author || owner);
+    if (mine) {
+      t.addEventListener("input", () => { sh.text = t.innerText; queueSave(); });
+      t.addEventListener("blur", () => { if (!sh.text || !sh.text.trim()) { const a = myShapes(); a.splice(a.indexOf(sh), 1); renderShapes(); } commit(); });
+    }
+    box.appendChild(t); world.appendChild(box);
+  }
+  placeShapes();
+}
+let psRaf = 0;
+function placeShapesSoon() { if (!psRaf) psRaf = requestAnimationFrame(() => { psRaf = 0; placeShapes(); }); }
+function placeShapes() {
+  const svg = world.querySelector(".shp"); if (!svg) return;
+  let h = "";
+  for (const { sh, mine } of allShapes()) {
+    const g = geo(sh);
+    if (sh.t === "text") { const e = world.querySelector(`.tx[data-sid="${sh.id}"]`); if (e) { e.style.display = g ? "" : "none"; if (g) { e.style.left = g.x0 + "px"; e.style.top = g.y0 + "px"; e.classList.toggle("on", selShape === sh.id); } } continue; }
+    if (g) h += shapeSvg(sh, g, mine ? sh.id : "", selShape === sh.id ? "on" : "");
+  }
+  if (drawTmp) h += shapeSvg(drawTmp, drawTmp.g, "", "tmp");
+  svg.innerHTML = h;
+}
+function relTo(n, x, y) { return n ? [Math.round((x - n.it.x) / n.it.w * 10000) / 10000, Math.round((y - n.it.y) / n.it.h * 10000) / 10000] : [r1(x), r1(y)]; }
+function startDraw(e) {
+  if (!me) { status("Cần đăng nhập để vẽ ghi chú", 3000); return false; }
+  const p = toWorld(e), pg = e.target.closest && e.target.closest(".pg"), n = pg ? nodeEls.get(pg.dataset.k) : null;
+  if (tool === "text") {
+    const sh = { id: Date.now().toString(36), t: "text", c: curColor, k: n ? pg.dataset.k : "", p: relTo(n, p.x, p.y), fs: Math.round(1 / view.s * 1000) / 1000, text: "", by: me.email, at: new Date().toISOString().slice(0, 10) };
+    myShapes().push(sh); renderShapes();
+    setTimeout(() => { const t = world.querySelector(`.tx[data-sid="${sh.id}"] .tt`); if (t) t.focus(); }, 0);
+    return false;
+  }
+  eDrag = { type: "draw", pid: e.pointerId, t: tool, n, k: n ? pg.dataset.k : "", x0: p.x, y0: p.y, sx: e.clientX, sy: e.clientY, moved: false };
+  vp.setPointerCapture(e.pointerId); return true;
+}
+function shapePointerDown(e) {
+  const hEl = e.target.closest && e.target.closest("[data-sid]");
+  const was = selShape;
+  if (!hEl) { if (selShape) { selShape = null; placeShapes(); } return false; }
+  const sh = myShapes().find((x) => x.id === hEl.dataset.sid); if (!sh) return false;
+  selShape = sh.id; if (was !== sh.id) placeShapes();
+  eDrag = { type: "shape", pid: e.pointerId, sh, p0: sh.p.slice(), n: sh.k ? nodeEls.get(sh.k) : null, sx: e.clientX, sy: e.clientY, moved: false };
+  vp.setPointerCapture(e.pointerId); e.preventDefault(); return true;
+}
+function deleteShape() { const a = myShapes(), i = a.findIndex((x) => x.id === selShape); if (i < 0) return; a.splice(i, 1); selShape = null; commit(); renderShapes(); status("Đã xoá hình (Ctrl+Z để hoàn tác)", 2000); }
+
+/* ----- tia gióng (snap) ----- */
+function snapPrep(skip) {
+  const W = vp.clientWidth, H = vp.clientHeight, xs = [], ys = [];
+  const vis = (b) => b.x * view.s + view.x < W + 200 && (b.x + b.w) * view.s + view.x > -200 && b.y * view.s + view.y < H + 200 && (b.y + b.h) * view.s + view.y > -200;
+  for (const [k, n] of nodeEls) { if (skip.has(k)) continue; const b = boxOf(n); if (!vis(b)) continue; xs.push(b.x, b.x + b.w / 2, b.x + b.w); ys.push(b.y, b.y + b.h / 2, b.y + b.h); }
+  for (const st of board.sets) if (!st.collapsed) { xs.push(st.cx); ys.push(st.cy); }
+  return { xs, ys };
+}
+function snapBox(b, S) {
+  const th = 7 / view.s; let bx = null, by = null;
+  for (const v of [b.x, b.x + b.w / 2, b.x + b.w]) for (const c of S.xs) { const d = c - v; if (Math.abs(d) < th && (!bx || Math.abs(d) < Math.abs(bx.d))) bx = { d, c }; }
+  for (const v of [b.y, b.y + b.h / 2, b.y + b.h]) for (const c of S.ys) { const d = c - v; if (Math.abs(d) < th && (!by || Math.abs(d) < Math.abs(by.d))) by = { d, c }; }
+  showGuides(bx && bx.c, by && by.c);
+  return { dx: bx ? bx.d : 0, dy: by ? by.d : 0 };
+}
+function showGuides(gx, gy) {
+  const G = $("#guides"); G.innerHTML = "";
+  if (gx != null) { const l = el("div", "gv"); l.style.left = (gx * view.s + view.x) + "px"; G.appendChild(l); }
+  if (gy != null) { const l = el("div", "gh2"); l.style.top = (gy * view.s + view.y) + "px"; G.appendChild(l); }
+}
+const unionBox = (bs) => { const x0 = Math.min(...bs.map((b) => b.x)), y0 = Math.min(...bs.map((b) => b.y)), x1 = Math.max(...bs.map((b) => b.x + b.w)), y1 = Math.max(...bs.map((b) => b.y + b.h)); return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }; };
+
+/* ----- kéo thả ----- */
 let eDrag = null;
 function editPointerDown(e) {
-  const t = e.target;
-  const grp = t.closest(".grp");
-  if (t.closest(".gx")) { e.preventDefault(); deleteGroup(grp.dataset.gid); return true; }
-  if (t.closest(".gr")) { e.preventDefault(); renameGroup(grp.dataset.gid); return true; }
-  const gt = t.closest(".gt,.gm"), gh = t.closest(".gh");
-  if (gt || gh) {
-    const g = board.groups.find((x) => x.id === grp.dataset.gid); if (!g) return false;
-    const inside = [];
-    if (gt) for (const n of nodeEls.values()) { const b = boxOf(n), cx = b.x + b.w / 2, cy = b.y + b.h / 2; if (cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h) inside.push({ n, ox: n.it.x, oy: n.it.y }); }
-    eDrag = { type: gt ? "group" : "resize", pid: e.pointerId, sx: e.clientX, sy: e.clientY, g, ox: g.x, oy: g.y, ow: g.w, oh: g.h, inside, moved: false };
-    vp.setPointerCapture(e.pointerId); vp.classList.add("panning"); return true;
-  }
-  const nd = t.closest(".pg,.lbl,.lnk");
+  const t = e.target, grp = t.closest(".grp");
+  if (t.closest(".gm")) { const g = board.groups.find((x) => x.id === grp.dataset.gid); eDrag = { type: "col", pid: e.pointerId, sx: e.clientX, sy: e.clientY, g, el: grp, moved: false }; vp.setPointerCapture(e.pointerId); return true; }
+  if (t.closest(".gw")) { const g = board.groups.find((x) => x.id === grp.dataset.gid); eDrag = { type: "colw", pid: e.pointerId, sx: e.clientX, sy: e.clientY, g, el: grp, moved: false }; vp.setPointerCapture(e.pointerId); return true; }
+  const sh = t.closest(".sh");
+  if (sh) { const se = sh.parentNode, st = board.sets.find((x) => x.id === se.dataset.sid); eDrag = { type: "set", pid: e.pointerId, sx: e.clientX, sy: e.clientY, st, el: se, moved: false }; vp.setPointerCapture(e.pointerId); return true; }
+  const nd = t.closest(".pg,.lnk");
   if (nd) {
     const k = nd.dataset.k, multi = e.shiftKey || e.ctrlKey || e.metaKey; let collapse = null;
-    if (!sel.has(k)) { if (!multi) sel.clear(); sel.add(k); paintSel(); renderSelBar(); }
-    else collapse = multi ? "toggle" : "single";
-    eDrag = { type: "move", pid: e.pointerId, sx: e.clientX, sy: e.clientY, k, collapse, moved: false, items: selNodes().map((n) => ({ n, ox: n.it.x, oy: n.it.y })) };
+    if (!sel.has(k)) { if (!multi) sel.clear(); sel.add(k); paintSel(); renderSelBar(); } else collapse = multi ? "toggle" : "single";
+    const items = selNodes().map((n) => ({ n, ox: n.it.x, oy: n.it.y }));
+    eDrag = { type: "move", pid: e.pointerId, sx: e.clientX, sy: e.clientY, k, collapse, moved: false, items, b0: unionBox(items.map((o) => boxOf(o.n))), S: snapPrep(new Set(sel)) };
     vp.setPointerCapture(e.pointerId); return true;
   }
-  if (t.closest(".note,.pin")) return false;
-  // nền: quét khung chọn nhiều
   const multi = e.shiftKey || e.ctrlKey || e.metaKey;
   eDrag = { type: "marq", pid: e.pointerId, sx: e.clientX, sy: e.clientY, base: multi ? new Set(sel) : new Set(), moved: false };
   if (!multi && sel.size) { sel.clear(); paintSel(); renderSelBar(); }
   vp.setPointerCapture(e.pointerId); return true;
 }
 function eDragMove(e) {
-  const d = eDrag, dx = (e.clientX - d.sx) / view.s, dy = (e.clientY - d.sy) / view.s;
+  const d = eDrag; let dx = (e.clientX - d.sx) / view.s, dy = (e.clientY - d.sy) / view.s;
   if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 4) return;
   d.moved = true;
-  if (d.type === "move") { for (const o of d.items) moveNode(o.n, o.ox + dx, o.oy + dy); placePins(); }
-  else if (d.type === "group") {
-    d.g.x = Math.round(d.ox + dx); d.g.y = Math.round(d.oy + dy);
-    const ge = world.querySelector(`.grp[data-gid="${CSS.escape(d.g.id)}"]`); ge.style.left = d.g.x + "px"; ge.style.top = d.g.y + "px";
-    for (const o of d.inside) moveNode(o.n, o.ox + dx, o.oy + dy); placePins();
-  } else if (d.type === "resize") {
-    d.g.w = Math.max(400, Math.round(d.ow + dx)); d.g.h = Math.max(300, Math.round(d.oh + dy));
-    const ge = world.querySelector(`.grp[data-gid="${CSS.escape(d.g.id)}"]`); ge.style.width = d.g.w + "px"; ge.style.height = d.g.h + "px";
-  } else if (d.type === "marq") {
+  if (d.type === "move") {
+    const sn = snapBox({ x: d.b0.x + dx, y: d.b0.y + dy, w: d.b0.w, h: d.b0.h }, d.S); dx += sn.dx; dy += sn.dy;
+    for (const o of d.items) moveNode(o.n, o.ox + dx, o.oy + dy); placePins(); placeShapesSoon();
+  } else if (d.type === "shape") {
+    if (!d.S) d.S = snapPrep(new Set());
+    const g0 = geo(Object.assign({}, d.sh, { p: d.p0 })); if (!g0) return;
+    const bb = d.sh.t === "text" ? { x: g0.x0, y: g0.y0, w: 0, h: 0 } : { x: Math.min(g0.x0, g0.x1), y: Math.min(g0.y0, g0.y1), w: Math.abs(g0.x1 - g0.x0), h: Math.abs(g0.y1 - g0.y0) };
+    const sn = snapBox({ x: bb.x + dx, y: bb.y + dy, w: bb.w, h: bb.h }, d.S); dx += sn.dx; dy += sn.dy;
+    const fx = d.n ? dx / d.n.it.w : dx, fy = d.n ? dy / d.n.it.h : dy;
+    d.sh.p = d.p0.map((v, i) => Math.round((v + (i % 2 ? fy : fx)) * 10000) / 10000); placeShapes();
+  } else if (d.type === "draw") {
+    const p = toWorld(e); d.x1 = p.x; d.y1 = p.y;
+    drawTmp = { t: d.t, c: curColor, w: 2.5 / view.s, g: { x0: d.x0, y0: d.y0, x1: d.x1, y1: d.y1 } }; placeShapes();
+  } else if (d.type === "set") {
+    d.el.style.transform = `translate(${dx}px,${dy}px)`; d.el.classList.add("drag");
+    const p = toWorld(e), gs = board.groups;
+    const col = gs.find((g) => p.x >= g.x && p.x <= g.x + g.w) || gs.reduce((a, g) => Math.abs(g.x + g.w / 2 - p.x) < Math.abs(a.x + a.w / 2 - p.x) ? g : a, gs[0]);
+    const list = board.sets.filter((t) => t.col === col.id && t.id !== d.st.id), idx = list.filter((t) => t.y + t.h / 2 < p.y).length;
+    const yb = idx < list.length ? list[idx].y - K.setGap / 2 : (list.length ? list[list.length - 1].y + list[list.length - 1].h + K.setGap / 2 : K.colHead - K.setGap / 2);
+    const ib = $("#insbar"); Object.assign(ib.style, { left: (col.x + K.pad) + "px", top: (yb - 6) + "px", width: (col.w - 2 * K.pad) + "px" }); ib.classList.remove("hidden");
+    d.target = { col, list, idx };
+  } else if (d.type === "col") { d.el.style.transform = `translateX(${dx}px)`; d.el.classList.add("drag"); d.dx = dx; }
+  else if (d.type === "colw") { d.w = Math.max(800, Math.round(d.g.w + dx)); d.el.style.width = d.w + "px"; }
+  else if (d.type === "marq") {
     const r = vp.getBoundingClientRect(), m = $("#marq");
     const x0 = Math.min(d.sx, e.clientX) - r.left, y0 = Math.min(d.sy, e.clientY) - r.top, x1 = Math.max(d.sx, e.clientX) - r.left, y1 = Math.max(d.sy, e.clientY) - r.top;
     Object.assign(m.style, { left: x0 + "px", top: y0 + "px", width: x1 - x0 + "px", height: y1 - y0 + "px" }); m.classList.remove("hidden");
@@ -985,9 +1321,18 @@ function eDragMove(e) {
   }
 }
 function eDragEnd(e, cancelled) {
-  const d = eDrag; eDrag = null; vp.classList.remove("panning"); $("#marq").classList.add("hidden");
+  const d = eDrag; eDrag = null; vp.classList.remove("panning"); $("#marq").classList.add("hidden"); $("#guides").innerHTML = "";
   if (!d) return;
+  if (d.type === "draw") {
+    const dt = drawTmp; drawTmp = null;
+    if (!cancelled && d.moved && dt && Math.hypot((d.x1 - d.x0) * view.s, (d.y1 - d.y0) * view.s) > 6) {
+      myShapes().push({ id: Date.now().toString(36), t: d.t, c: curColor, w: r1(2.5 / view.s) || 0.1, k: d.k, p: [...relTo(d.n, d.x0, d.y0), ...relTo(d.n, d.x1, d.y1)], by: me.email, at: new Date().toISOString().slice(0, 10) });
+      commit();
+    }
+    renderShapes(); return;
+  }
   if (cancelled) { rebuildBoard(); return; }
+  if (d.type === "shape") { if (d.moved) commit(); return; }
   if (d.type === "marq") { applySelection(); return; }
   if (!d.moved) {
     if (d.type === "move") {
@@ -999,42 +1344,22 @@ function eDragEnd(e, cancelled) {
     return;
   }
   if (d.type === "move") recordMoves(d.items.map((o) => o.n));
-  else if (d.type === "group") { saveGroup(d.g); recordMoves(d.inside.map((o) => o.n)); }
-  else if (d.type === "resize") saveGroup(d.g);
-  commit();
-}
-function saveGroup(g) { if (!g.nw) L.g[g.id] = Object.assign(L.g[g.id] || {}, { x: g.x, y: g.y, w: g.w, h: g.h, title: g.title }); }
-function deleteGroup(gid) {
-  const g = board.groups.find((x) => x.id === gid); if (!g) return;
-  if (!confirm("Xoá vùng “" + g.title + "”?\nCác trang bên trong vẫn giữ nguyên trên bảng.")) return;
-  if (g.nw) L.ng = L.ng.filter((x) => x.id !== gid); else L.g[gid] = Object.assign(L.g[gid] || {}, { del: 1 });
+  else if (d.type === "set") { if (!d.target) return rebuildBoard(); const { col, list, idx } = d.target, ids = list.map((t) => t.id); ids.splice(idx, 0, d.st.id); ids.forEach((id, i) => (L.sets[id] = { col: col.id, ord: i })); }
+  else if (d.type === "col") { const c = (g) => g === d.g ? g.x + g.w / 2 + d.dx : g.x + g.w / 2; L.colOrder = [...board.groups].sort((a, b) => c(a) - c(b)).map((g) => g.id); }
+  else if (d.type === "colw") L.cols[d.g.id] = Object.assign(L.cols[d.g.id] || {}, { w: d.w });
   commit(); rebuildBoard();
-}
-function renameGroup(gid) {
-  const g = board.groups.find((x) => x.id === gid); if (!g) return;
-  const v = prompt("Tên vùng:", g.title); if (v == null || !v.trim()) return;
-  g.title = v.trim(); saveGroup(g); commit(); rebuildBoard();
-}
-function addGroup() {
-  const c = viewCenter();
-  L.ng.push({ id: "Z" + Date.now().toString(36), title: "Vùng mới", color: "#7c3aed", x: Math.round(c.x - 600), y: Math.round(c.y - 400), w: 1200, h: 800, nw: 1 });
-  commit(); rebuildBoard(); status("Đã thêm vùng mới – kéo tiêu đề để di chuyển, kéo góc dưới phải để đổi cỡ, ✎ để đổi tên", 5000);
 }
 function deleteSelection() {
   if (!editMode || !sel.size) return;
-  if (sel.size > 3 && !confirm("Xoá " + sel.size + " mục khỏi bảng?\n(File gốc không bị xoá; có thể khôi phục bằng “＋ Thêm trang”.)")) return;
-  const n0 = sel.size;
-  for (const k of [...sel]) {
-    const n = nodeEls.get(k); if (!n) continue;
-    const i = L.add.indexOf(n.it); if (i >= 0) L.add.splice(i, 1); else if (!L.hide.includes(k)) L.hide.push(k);
-  }
-  sel.clear(); commit(); rebuildBoard(); status("Đã xoá " + n0 + " mục khỏi bảng (Ctrl+Z để hoàn tác)", 3500);
+  if (sel.size > 3 && !confirm("Gỡ " + sel.size + " mục khỏi bảng?\n(File gốc không bị xoá; khôi phục bằng ↺ Khôi phục.)")) return;
+  const n0 = sel.size; for (const k of sel) if (!L.hide.includes(k)) L.hide.push(k);
+  sel.clear(); commit(); rebuildBoard(); status("Đã gỡ " + n0 + " mục khỏi bảng (Ctrl+Z để hoàn tác)", 3500);
 }
 function nudgeSel(key, step) {
   const ns = selNodes(); if (!ns.length) return;
   const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0, dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
   for (const n of ns) moveNode(n, n.it.x + dx, n.it.y + dy);
-  recordMoves(ns); placePins(); clearTimeout(nudgeSel.t); nudgeSel.t = setTimeout(commit, 400);
+  recordMoves(ns); placePins(); placeShapesSoon(); clearTimeout(nudgeSel.t); nudgeSel.t = setTimeout(() => { commit(); rebuildBoard(); }, 500);
 }
 function alignSel(mode) {
   const ns = selNodes(); if (ns.length < 2) return status("Chọn ít nhất 2 mục", 2500);
@@ -1047,16 +1372,15 @@ function alignSel(mode) {
     const total = arr.reduce((s2, o) => s2 + (hz ? o.b.w : o.b.h), 0), gap = (end - start - total) / (arr.length - 1);
     let pos = start; for (const o of arr) { if (hz) moveNode(o.n, pos, o.n.it.y); else moveNode(o.n, o.n.it.x, pos); pos += (hz ? o.b.w : o.b.h) + gap; }
   }
-  recordMoves(ns); placePins(); commit();
+  recordMoves(ns); commit(); rebuildBoard();
 }
 function gridSel() {
   const ns = selNodes(); if (ns.length < 2) return status("Chọn ít nhất 2 mục", 2500);
   const cols = parseInt(prompt("Xếp thành mấy cột?", String(Math.min(ns.length, 5))), 10); if (!cols || cols < 1) return;
   const bx = ns.map(boxOf), x0 = Math.min(...bx.map((b) => b.x)), y0 = Math.min(...bx.map((b) => b.y));
-  const cw = Math.max(...bx.map((b) => b.w)) + 15, ch = Math.max(...bx.map((b) => b.h)) + 15, rh = bx.reduce((s2, b) => s2 + b.h, 0) / bx.length;
-  const order = ns.map((n, i) => ({ n, b: bx[i], row: Math.round(bx[i].y / rh) })).sort((a, b) => a.row - b.row || a.b.x - b.b.x);
-  order.forEach((o, i) => moveNode(o.n, x0 + (i % cols) * cw, y0 + Math.floor(i / cols) * ch));
-  recordMoves(ns); placePins(); commit();
+  const cw = Math.max(...bx.map((b) => b.w)) + K.gap, ch = Math.max(...bx.map((b) => b.h)) + K.gap, rh = bx.reduce((s2, b) => s2 + b.h, 0) / bx.length;
+  ns.map((n, i) => ({ n, b: bx[i], row: Math.round(bx[i].y / rh) })).sort((a, b) => a.row - b.row || a.b.x - b.b.x).forEach((o, i) => moveNode(o.n, x0 + (i % cols) * cw, y0 + Math.floor(i / cols) * ch));
+  recordMoves(ns); commit(); rebuildBoard();
 }
 
 /* ----- cửa sổ phụ ----- */
@@ -1064,6 +1388,20 @@ function openModal(title, node) { $("#mTitle").textContent = title; const b = $(
 function closeModal() { $("#modal").classList.add("hidden"); $("#mBody").innerHTML = ""; }
 $("#mClose").onclick = closeModal;
 $("#modal").addEventListener("pointerdown", (e) => { if (e.target.id === "modal") closeModal(); });
+function openRestore() {
+  const B = el("div"), rows = [];
+  for (const id of L.hideSets) { const s = SETS.get(id); if (s) rows.push({ kind: "set", id, text: "Bộ: " + s.title }); }
+  for (const k of L.hide) { const [doc, pg] = k.split("#"), d = docsAll[doc]; rows.push({ kind: "item", id: k, text: k.startsWith("K:") ? "Tệp: " + k.slice(2).split("/").pop() : (d ? d.name : doc) + " — tr." + pg }); }
+  if (!rows.length) { B.appendChild(el("div", "wbox", "Chưa có bộ hay trang nào bị gỡ khỏi bảng.")); return openModal("Khôi phục", B); }
+  const chosen = new Set(), cbs = [];
+  const all = el("label", "mrow"), ca = el("input"); ca.type = "checkbox"; all.append(ca, document.createTextNode(" Chọn tất cả (" + rows.length + ")")); B.appendChild(all);
+  const lst = el("div", "mlist"); B.appendChild(lst);
+  for (const r of rows) { const l = el("label", "mrow"), c = el("input"); c.type = "checkbox"; cbs.push(c); c.onchange = () => (c.checked ? chosen.add(r) : chosen.delete(r)); l.append(c, document.createTextNode(" " + r.text)); lst.appendChild(l); }
+  ca.onchange = () => cbs.forEach((c) => { c.checked = ca.checked; c.onchange(); });
+  const go = el("button", "primary", "Khôi phục mục đã chọn");
+  go.onclick = () => { if (!chosen.size) return; const n = chosen.size; const cs = [...chosen]; L.hideSets = L.hideSets.filter((id) => !cs.some((r) => r.kind === "set" && r.id === id)); L.hide = L.hide.filter((k) => !cs.some((r) => r.kind === "item" && r.id === k)); commit(); rebuildBoard(); closeModal(); status("Đã khôi phục " + n + " mục", 3000); };
+  B.appendChild(go); openModal("Khôi phục bộ / trang đã gỡ", B);
+}
 
 /* ----- gắn trang vào hạng mục WBS ----- */
 function wbsPick(keys) {
@@ -1089,91 +1427,6 @@ function addToWbs(id, keys) {
   st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave();
   status("Đã gắn " + n + " trang vào hạng mục", 3000);
   $("#side").classList.remove("hidden"); setSideTab("wbs"); openWbsItem(id, true);
-}
-
-/* ----- thêm trang: khôi phục trang đã xoá / thêm file PDF mới ----- */
-const hashStr = (s2) => { let h = 5381; for (let i = 0; i < s2.length; i++) h = ((h << 5) + h + s2.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
-function parseRange(spec, n) {
-  const out = new Set();
-  for (const part of String(spec).split(/[,;\s]+/)) { const m = part.match(/^(\d+)(?:-(\d+))?$/); if (!m) continue; const a = +m[1], b = m[2] ? +m[2] : a; for (let i = Math.max(1, Math.min(a, b)); i <= Math.min(n, Math.max(a, b)); i++) out.add(i); }
-  return [...out].sort((a, b) => a - b);
-}
-function describeItem(it) { return it.type === "page" ? ((baseBoard.docs[it.doc] || {}).name || it.doc) + " — tr." + it.page : it.type === "label" ? "Tiêu đề: " + it.text : "File: " + it.name; }
-function openAddDialog() {
-  if (!editMode) return;
-  const B = el("div"), tabs = el("div", "mtabs"), t1 = el("button", "on", "Trang đã xoá"), t2 = el("button", null, "Thêm file PDF mới");
-  tabs.append(t1, t2); B.appendChild(tabs);
-  const p1 = el("div"), p2 = el("div", "hidden"); B.append(p1, p2);
-  // --- tab 1
-  const hidden = baseBoard.items.filter((it) => L.hide.includes(keyOf(it)));
-  if (!hidden.length) p1.appendChild(el("div", "wbox", "Chưa có mục nào bị xoá khỏi bảng. Khi xoá trang, nó sẽ nằm ở đây để khôi phục."));
-  else {
-    const chosen = new Set(), rows = [];
-    const all = el("label", "mrow"), ca = el("input"); ca.type = "checkbox"; all.append(ca, document.createTextNode(" Chọn tất cả (" + hidden.length + ")")); p1.appendChild(all);
-    const lst = el("div", "mlist"); p1.appendChild(lst);
-    for (const it of hidden) {
-      const k = keyOf(it), l = el("label", "mrow"), c = el("input"); c.type = "checkbox"; rows.push(c);
-      c.onchange = () => { if (c.checked) chosen.add(k); else chosen.delete(k); };
-      l.append(c, document.createTextNode(" " + describeItem(it))); lst.appendChild(l);
-    }
-    ca.onchange = () => rows.forEach((c) => { c.checked = ca.checked; c.onchange(); });
-    const go = el("button", "primary", "Khôi phục mục đã chọn");
-    go.onclick = () => { if (!chosen.size) return status("Chưa chọn mục nào", 2000); const n = chosen.size; L.hide = L.hide.filter((k) => !chosen.has(k)); commit(); rebuildBoard(); closeModal(); status("Đã khôi phục " + n + " mục về đúng chỗ cũ", 3000); };
-    p1.appendChild(go);
-  }
-  // --- tab 2
-  let pdfList = null;
-  const fq = el("input"); fq.type = "search"; fq.placeholder = "Lọc theo tên file / thư mục…";
-  const lst2 = el("div", "mlist"), info = el("div", "msub"); p2.append(fq, lst2, info);
-  const drawList = () => {
-    lst2.innerHTML = ""; const nq = norm(fq.value), used = new Set(Object.values(board.docs).map((d) => d.path)); let c = 0;
-    for (const f of pdfList) {
-      if (used.has(f.path) || (nq && !norm(f.path).includes(nq))) continue;
-      if (++c > 100) break;
-      const r = el("div", "mrow"); r.append(el("b", null, f.name), el("small", null, f.path)); r.onclick = () => pickPdf(f); lst2.appendChild(r);
-    }
-    if (!c) lst2.appendChild(el("div", "wbox", "Không có file PDF nào chưa nằm trên bảng" + (nq ? " khớp bộ lọc." : ".")));
-  };
-  fq.oninput = () => pdfList && drawList();
-  async function pickPdf(f) {
-    info.textContent = "Đang mở " + f.name + " …";
-    const id = "x" + hashStr(f.path);
-    board.docs[id] = board.docs[id] || { name: f.name, path: f.path, pages: 0, kind: "pdf", group: "", dupes: [], scanned: false };
-    let pdf; try { pdf = await getPdf(id); } catch (e) { info.textContent = "Không mở được file: " + e.message; return; }
-    board.docs[id].pages = pdf.numPages; lst2.classList.add("hidden"); fq.classList.add("hidden"); info.innerHTML = "";
-    info.append(el("b", null, f.name), el("div", "msub", pdf.numPages + " trang · lưu ý: trang thêm mới chưa tìm kiếm được bằng ô Tìm"));
-    const rg = el("input"); rg.value = "1-" + Math.min(pdf.numPages, 20); rg.placeholder = "VD: 1-10,15";
-    const go = el("button", "primary", "Thêm vào bảng"); go.onclick = () => addPdfPages(id, f, pdf, rg.value, go);
-    info.append(el("div", null, "Trang cần thêm (tối đa 60 trang một lần):"), rg, go);
-  }
-  t1.onclick = () => { t1.className = "on"; t2.className = ""; p1.classList.remove("hidden"); p2.classList.add("hidden"); };
-  t2.onclick = async () => {
-    t2.className = "on"; t1.className = ""; p2.classList.remove("hidden"); p1.classList.add("hidden");
-    if (!pdfList) { info.textContent = "Đang đọc danh sách file PDF trên Drive…"; try { pdfList = await src.listPdfs(); } catch (e) { pdfList = []; } info.textContent = ""; }
-    drawList(); fq.focus();
-  };
-  openModal("Thêm trang vào bảng", B);
-}
-async function addPdfPages(id, f, pdf, spec, goBtn) {
-  const pgs = parseRange(spec, pdf.numPages).slice(0, 60); if (!pgs.length) return status("Chưa chọn trang nào", 3000);
-  goBtn.disabled = true; goBtn.textContent = "Đang thêm…";
-  const c = viewCenter(), cols = 5, gap = 15; let x = c.x, y = c.y, rowH = 0, col = 0; const items = [];
-  for (const pn of pgs) {
-    const page = await pdf.getPage(pn), v = page.getViewport({ scale: 1 }), w = Math.round(v.width * 0.3528 * 10) / 10, h = Math.round(v.height * 0.3528 * 10) / 10;
-    if (col === cols) { col = 0; x = c.x; y += rowH + gap; rowH = 0; }
-    items.push({ type: "page", doc: id, page: pn, x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10, w, h, render: 1, add: 1 });
-    x += w + gap; rowH = Math.max(rowH, h); col++;
-  }
-  const gid = (board.groups.find((g) => c.x >= g.x && c.x <= g.x + g.w && c.y >= g.y && c.y <= g.y + g.h) || {}).id || "";
-  L.docs[id] = { name: f.name, path: f.path, pages: pdf.numPages, kind: "pdf", group: gid, dupes: [], scanned: false };
-  const exist = new Set(L.add.map(keyOf)), fresh = items.filter((it) => !exist.has(keyOf(it)));
-  const lab = { type: "label", x: Math.round(c.x), y: Math.round(c.y - 50), text: f.name, doc: id, sub: f.path, add: 1 };
-  if (!exist.has(keyOf(lab))) L.add.push(lab);
-  L.add.push(...fresh);
-  commit(); rebuildBoard(); closeModal();
-  const x0 = Math.min(...fresh.map((i) => i.x)), y0 = Math.min(...fresh.map((i) => i.y - 50)), x1 = Math.max(...fresh.map((i) => i.x + i.w)), y1 = Math.max(...fresh.map((i) => i.y + i.h));
-  focusRect({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 }, 0.08);
-  status("Đã thêm " + fresh.length + " trang từ " + f.name + " – kéo chúng vào đúng vùng", 5000);
 }
 
 

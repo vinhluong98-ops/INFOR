@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Project Board</title>
-<link rel="stylesheet" href="style.css?v=6">
-<script src="config.js?v=6"></script>
+<link rel="stylesheet" href="style.css?v=7">
+<script src="config.js?v=7"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -17,13 +17,10 @@
     <span id="qInfo"></span>
   </div>
   <div class="tools">
-    <button data-tool="select" class="on" title="Chọn / kéo (V)">↖</button>
-    <button data-tool="note" title="Thêm ghi chú (N) – bấm lên bảng">🗒</button>
-    <button data-tool="pin" title="Ghim lên trang (P) – bấm vào chỗ cần ghim trên một trang">📍</button>
-    <button id="btnEdit" title="Sửa bố cục: kéo / xoá / thêm trang, di chuyển vùng (E)">✎ Sửa bảng</button>
+    <button id="btnEdit" title="Sửa bố cục: kéo trang, đổi chỗ bộ hồ sơ, vùng (E)">✎ Sửa bảng</button>
     <button id="btnFit" title="Xem toàn bộ (Shift+1)">⤢</button>
-    <button id="btnNotes" title="Ẩn/hiện ghi chú và ghim">👁</button>
-    <select id="layoutSel" class="hidden" title="Chọn bố cục bảng (gốc / của tôi / của người khác)"></select>
+    <button id="btnNotes" title="Ẩn/hiện ghi chú, ghim, hình vẽ">👁</button>
+    <select id="layoutSel" class="hidden" title="Chọn bố cục (mặc định / của tôi / của người khác)"></select>
     <button id="btnClaude" title="Bật/tắt cửa sổ Claude ở cạnh phải (Ctrl+Alt+C)">💬 Claude</button>
     <button id="btnWbs" class="hidden" title="WBS Dictionary – hạng mục kèm bản vẽ, SPEC, BOQ">WBS</button>
   </div>
@@ -43,14 +40,27 @@
   <div class="rhead"><span id="rCount"></span><button id="rClose">✕</button></div>
   <div id="rList"></div>
 </aside>
+<div id="drawbar">
+  <button data-tool="select" class="on" title="Chọn / kéo (V)">↖</button>
+  <button data-tool="note" title="Ghi chú dán (N)">🗒</button>
+  <button data-tool="pin" title="Ghim lên trang (P)">📍</button>
+  <span class="dsep"></span>
+  <button data-tool="cloud" title="Đám mây (C) – kéo để vẽ">☁</button>
+  <button data-tool="rect" title="Hình chữ nhật (R)">▭</button>
+  <button data-tool="arrow" title="Mũi tên (A)">➚</button>
+  <button data-tool="text" title="Chữ (T) – bấm vào chỗ cần ghi">T</button>
+  <button data-tool="hl" title="Tô highlight (H) – kéo vùng cần tô">🖍</button>
+  <span class="dsep"></span>
+  <div id="colors"></div>
+</div>
 <div id="bars">
   <div id="editbar" class="bar hidden">
     <b>✎ Sửa bố cục</b>
-    <button id="eAdd" title="Khôi phục trang đã xoá hoặc thêm file PDF mới">＋ Thêm trang</button>
-    <button id="eGroup" title="Thêm một vùng mới">＋ Vùng</button>
+    <button id="eAdd" title="Khôi phục bộ / trang đã gỡ khỏi bảng">↺ Khôi phục</button>
+    <button id="eGroup" title="Thêm một vùng mới (4 vùng chính luôn giữ)">＋ Vùng</button>
     <button id="eUndo" title="Hoàn tác (Ctrl+Z)">↶</button>
     <button id="eRedo" title="Làm lại (Ctrl+Y)">↷</button>
-    <button id="eReset" title="Bỏ hết thay đổi, về bố cục gốc">Về bố cục gốc</button>
+    <button id="eReset" title="Bỏ hết thay đổi, về bố cục mặc định">Về mặc định</button>
     <button id="eDone" class="on">Xong</button>
   </div>
   <div id="selbar" class="bar hidden"></div>
@@ -59,6 +69,7 @@
 <main id="viewport">
   <div id="world"></div>
   <div id="marq" class="hidden"></div>
+  <div id="guides"></div>
   <div id="empty">
     <h2>Project Board</h2>
     <p id="emptyMsg">Đăng nhập Google để mở bảng.</p>
@@ -71,7 +82,7 @@
 </main>
 <div id="status"></div>
 <div id="zoomInfo"></div>
-<script src="lib/pdf.min.js?v=6"></script>
-<script src="app.js?v=6"></script>
+<script src="lib/pdf.min.js?v=7"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>
