@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Project Board</title>
-<link rel="stylesheet" href="style.css?v=5">
-<script src="config.js?v=5"></script>
+<link rel="stylesheet" href="style.css?v=6">
+<script src="config.js?v=6"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -19,8 +19,11 @@
   <div class="tools">
     <button data-tool="select" class="on" title="Chọn / kéo (V)">↖</button>
     <button data-tool="note" title="Thêm ghi chú (N) – bấm lên bảng">🗒</button>
+    <button data-tool="pin" title="Ghim lên trang (P) – bấm vào chỗ cần ghim trên một trang">📍</button>
+    <button id="btnEdit" title="Sửa bố cục: kéo / xoá / thêm trang, di chuyển vùng (E)">✎ Sửa bảng</button>
     <button id="btnFit" title="Xem toàn bộ (Shift+1)">⤢</button>
-    <button id="btnNotes" title="Ẩn/hiện ghi chú">👁</button>
+    <button id="btnNotes" title="Ẩn/hiện ghi chú và ghim">👁</button>
+    <select id="layoutSel" class="hidden" title="Chọn bố cục bảng (gốc / của tôi / của người khác)"></select>
     <button id="btnClaude" title="Bật/tắt cửa sổ Claude ở cạnh phải (Ctrl+Alt+C)">💬 Claude</button>
     <button id="btnWbs" class="hidden" title="WBS Dictionary – hạng mục kèm bản vẽ, SPEC, BOQ">WBS</button>
   </div>
@@ -40,8 +43,22 @@
   <div class="rhead"><span id="rCount"></span><button id="rClose">✕</button></div>
   <div id="rList"></div>
 </aside>
+<div id="bars">
+  <div id="editbar" class="bar hidden">
+    <b>✎ Sửa bố cục</b>
+    <button id="eAdd" title="Khôi phục trang đã xoá hoặc thêm file PDF mới">＋ Thêm trang</button>
+    <button id="eGroup" title="Thêm một vùng mới">＋ Vùng</button>
+    <button id="eUndo" title="Hoàn tác (Ctrl+Z)">↶</button>
+    <button id="eRedo" title="Làm lại (Ctrl+Y)">↷</button>
+    <button id="eReset" title="Bỏ hết thay đổi, về bố cục gốc">Về bố cục gốc</button>
+    <button id="eDone" class="on">Xong</button>
+  </div>
+  <div id="selbar" class="bar hidden"></div>
+</div>
+<div id="modal" class="hidden"><div class="mbox"><div class="mhead"><b id="mTitle"></b><button id="mClose">✕</button></div><div id="mBody"></div></div></div>
 <main id="viewport">
   <div id="world"></div>
+  <div id="marq" class="hidden"></div>
   <div id="empty">
     <h2>Project Board</h2>
     <p id="emptyMsg">Đăng nhập Google để mở bảng.</p>
@@ -54,7 +71,7 @@
 </main>
 <div id="status"></div>
 <div id="zoomInfo"></div>
-<script src="lib/pdf.min.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="lib/pdf.min.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>
