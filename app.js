@@ -15,6 +15,7 @@ let board = null, index = null, notes = {}, myNotesFileId = null;
 let view = { x: 40, y: 40, s: 0.1 };
 const world = $("#world"), vp = $("#viewport");
 const pageEls = [];        // {it, el, img, level}
+let cropTarget = null, cropFromPopup = false;
 let tool = "select";
 let baseBoard = null, L = null, layoutOwner = "base", editMode = false;
 const sel = new Set(), nodeEls = new Map();
@@ -111,6 +112,7 @@ function DriveSource(rootId) {
       next();
     });
   }
+  let wbsFolderP = null;
   const textCache = {};
   return {
     kind: "drive", lastError: () => lastErr,
@@ -139,6 +141,22 @@ function DriveSource(rootId) {
       return out.buffer;
     },
     openUrl(p) { const id = paths[p]; return id ? `https://drive.google.com/file/d/${id}/view` : null; },
+    async saveImage(blob) {
+      let f = paths["_BOARD/wbsimg/"];
+      if (!f) {
+        wbsFolderP = wbsFolderP || (async () => {
+          const r = await (await gfetch(API + "?supportsAllDrives=true", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "wbsimg", mimeType: "application/vnd.google-apps.folder", parents: [paths["_BOARD/"]] }) })).json();
+          if (!r.id) throw new Error("không tạo được thư mục hình"); return (paths["_BOARD/wbsimg/"] = r.id);
+        })();
+        try { f = await wbsFolderP; } catch (e) { wbsFolderP = null; throw e; }
+      }
+      const fd = new FormData();
+      fd.append("metadata", new Blob([JSON.stringify({ name: "wbs_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5) + ".jpg", parents: [f], mimeType: "image/jpeg" })], { type: "application/json" }));
+      fd.append("file", blob);
+      const r = await (await gfetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", { method: "POST", body: fd })).json();
+      if (!r.id) throw new Error("Drive không nhận hình"); return r.id;
+    },
+    async imageUrl(id) { return URL.createObjectURL(await (await gfetch(`${API}/${id}?alt=media&supportsAllDrives=true`)).blob()); },
     async files() { await (origReady || Promise.resolve()); return Object.keys(fmeta).filter((p) => !p.startsWith("_BOARD/")).map((p) => ({ path: p, size: fmeta[p].size, mt: fmeta[p].mt })); },
     async loadNotes() {
       const nf = paths["_BOARD/notes/"]; if (!nf) return {};
@@ -170,6 +188,7 @@ function DriveSource(rootId) {
 }
 
 /* ---------------- nguồn local (thử nghiệm: ?local=<url thư mục dự án>) ---------------- */
+const localImgs = new Map();
 function LocalSource(base) {
   base = base.replace(/\/$/, "") + "/";
   const enc = (p) => p.split("/").map(encodeURIComponent).join("/");
@@ -181,6 +200,8 @@ function LocalSource(base) {
     async pdfData(p) { return (await fetch(base + enc(p))).arrayBuffer(); },
     async text(id) { return textCache[id] || (textCache[id] = await (await fetch(base + "_BOARD/text/" + id + ".json")).json()); },
     openUrl(p) { return base + enc(p); },
+    async saveImage(blob) { const id = "L" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); localImgs.set(id, blob); return id; },
+    async imageUrl(id) { const b = localImgs.get(id); return b ? URL.createObjectURL(b) : ""; },
     async files() { try { return await (await fetch(base + "_BOARD/filelist.json")).json(); } catch (e) { return []; } },
     async loadNotes() { try { return JSON.parse(localStorage.getItem("pb_notes") || "{}"); } catch (e) { return {}; } },
     async saveNotes(d) { const all = JSON.parse(localStorage.getItem("pb_notes") || "{}"); all[me.email] = d; localStorage.setItem("pb_notes", JSON.stringify(all)); }
@@ -413,6 +434,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key === "a" || e.key === "A") setTool("arrow");
   else if (e.key === "t" || e.key === "T") setTool("text");
   else if (e.key === "h" || e.key === "H") setTool("hl");
+  else if (e.key === "x" || e.key === "X") setTool("crop");
   else if (e.key === "e" || e.key === "E") setEditMode(!editMode);
   else if (e.key === "\\") $("#side").classList.toggle("hidden");
   else if (e.key === "Escape") { setTool("select"); clearHl(); if (sel.size) { sel.clear(); applySelection(); } if (selShape) { selShape = null; placeShapes(); } }
@@ -422,7 +444,7 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keyup", (e) => { if (e.key === " ") spaceDown = false; });
 window.addEventListener("resize", apply);
-function setTool(t) { tool = t; document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t)); vp.classList.toggle("tool-note", t !== "select"); }
+function setTool(t) { tool = t; if (t !== "crop") { cropTarget = null; cropFromPopup = false; } document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t)); vp.classList.toggle("tool-note", t !== "select"); }
 document.querySelectorAll("[data-tool]").forEach((b) => (b.onclick = () => setTool(b.dataset.tool)));
 $("#btnFit").onclick = fitAll;
 $("#btnSide").onclick = () => $("#side").classList.toggle("hidden");
@@ -592,16 +614,22 @@ function renderWbs() {
       let lastCat = null;
       const byCat = {}; for (const it of p.items) (byCat[it.cat] = byCat[it.cat] || []).push(it);
       for (const [cat, its] of Object.entries(byCat)) {
-        const rows = its.filter((it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || norm(it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
+        const rows = its.filter((it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || norm(codeOf(it.id) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
         if (!rows.length) continue;
         box.appendChild(el("div", "wc", cat));
         for (const it of rows) {
           const r = el("div", "wi"); r.dataset.id = it.id; if (wbsCur === it.id) r.classList.add("cur");
           r.appendChild(el("span", "n", it.stt));
+          const ci = el("input", "cdin sm"); ci.placeholder = "mã"; ci.value = codeOf(it.id); ci.disabled = !me; ci.title = me ? "Nhập mã code của hạng mục" : "Đăng nhập để nhập mã";
+          ci.onclick = (e) => e.stopPropagation(); ci.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") ci.blur(); };
+          ci.oninput = () => { const s2 = wbsState(it.id); s2.code = ci.value.trim(); touchSt(s2); queueSave(); };
+          r.appendChild(ci);
           const t = el("span", "t", it.name);
           if (it.warnings.length) { const b = el("span", "bdg " + (it.matrix === "Central" ? "r" : "w"), "⚠" + it.warnings.length); t.appendChild(b); }
           if (wbsPeers(it.id).length) t.appendChild(el("span", "bdg ok", "✓"));
           r.appendChild(t); r.appendChild(el("span", "q", it.qty != null ? it.qty.toLocaleString("vi-VN") + " " + it.unit : ""));
+          { const ni = imgsOf(it.id).length, hasN = [...Object.values(notes)].some((d) => d.wbs && d.wbs[it.id] && d.wbs[it.id].note);
+            const nb = el("button", "nb" + (ni || hasN ? " has" : ""), "📝" + (ni ? ni : "")); nb.title = "Ghi chú & hình của hạng mục (mở cửa sổ)"; nb.onclick = (e) => { e.stopPropagation(); openWbsNote(it.id); }; r.appendChild(nb); }
           r.onclick = () => openWbsItem(it.id); box.appendChild(r);
         }
       }
@@ -627,6 +655,7 @@ function openWbsItem(id, noFocus) {
   const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
   B.appendChild(el("h3", null, it.stt + ". " + it.name));
   B.appendChild(el("div", "sub", it.cat + (it.qty != null ? " · " + it.qty.toLocaleString("vi-VN") + " " + it.unit : "") + " · BOQ NEM mục: " + it.boq_group));
+  B.appendChild(wbsHead(id, st));
   // phạm vi
   B.appendChild(el("h4", null, "Phạm vi"));
   const sc = el("div", "wbox" + (it.matrix === "NEM" ? "" : " err"));
@@ -1148,7 +1177,7 @@ function addPinAt(e) {
 }
 
 /* ----- hình vẽ: đám mây, chữ nhật, mũi tên, chữ, highlight ----- */
-const DRAW = { cloud: 1, rect: 1, arrow: 1, text: 1, hl: 1 };
+const DRAW = { cloud: 1, rect: 1, arrow: 1, text: 1, hl: 1, crop: 1 };
 const COLORS = ["#dc2626", "#f97316", "#facc15", "#16a34a", "#2563eb", "#9333ea", "#111827"];
 let curColor = localStorage.getItem("pb_color") || COLORS[0], selShape = null, drawTmp = null;
 (function initColors() {
@@ -1178,6 +1207,7 @@ function cloudPath(x0, y0, x1, y1, r) {
   return d + "Z";
 }
 function shapeSvg(sh, g, sid, cls) {
+  if (sh.t === "crop") { const x = Math.min(g.x0, g.x1), y = Math.min(g.y0, g.y1), w0 = Math.abs(g.x1 - g.x0), h0 = Math.abs(g.y1 - g.y0), s = 2.5 / (sh.w ? 2.5 / sh.w : 1); return `<g class="tmp"><path d="M${x},${y}h${w0}v${h0}h${-w0}Z" fill="#2563eb" fill-opacity=".14" stroke="#1d4ed8" stroke-width="${sh.w * 1.2}" stroke-dasharray="${sh.w * 4} ${sh.w * 3}"/></g>`; }
   const c = /^#[0-9a-f]{3,8}$/i.test(sh.c) ? sh.c : "#dc2626", w = sh.w || 3;
   const Lx = Math.min(g.x0, g.x1), T = Math.min(g.y0, g.y1), W = Math.abs(g.x1 - g.x0), H = Math.abs(g.y1 - g.y0);
   let d;
@@ -1222,6 +1252,7 @@ function relTo(n, x, y) { return n ? [Math.round((x - n.it.x) / n.it.w * 10000) 
 function startDraw(e) {
   if (!me) { status("Cần đăng nhập để vẽ ghi chú", 3000); return false; }
   const p = toWorld(e), pg = e.target.closest && e.target.closest(".pg"), n = pg ? nodeEls.get(pg.dataset.k) : null;
+  if (tool === "crop" && !n) { status("Kéo chuột bên trong một trang để cắt", 2500); return false; }
   if (tool === "text") {
     const sh = { id: Date.now().toString(36), t: "text", c: curColor, k: n ? pg.dataset.k : "", p: relTo(n, p.x, p.y), fs: Math.round(1 / view.s * 1000) / 1000, text: "", by: me.email, at: new Date().toISOString().slice(0, 10) };
     myShapes().push(sh); renderShapes();
@@ -1327,6 +1358,7 @@ function eDragEnd(e, cancelled) {
   if (!d) return;
   if (d.type === "draw") {
     const dt = drawTmp; drawTmp = null;
+    if (!cancelled && d.moved && dt && Math.hypot((d.x1 - d.x0) * view.s, (d.y1 - d.y0) * view.s) > 6 && d.t === "crop") { renderShapes(); cropDone(d); return; }
     if (!cancelled && d.moved && dt && Math.hypot((d.x1 - d.x0) * view.s, (d.y1 - d.y0) * view.s) > 6) {
       myShapes().push({ id: Date.now().toString(36), t: d.t, c: curColor, w: r1(2.5 / view.s) || 0.1, k: d.k, p: [...relTo(d.n, d.x0, d.y0), ...relTo(d.n, d.x1, d.y1)], by: me.email, at: new Date().toISOString().slice(0, 10) });
       commit();
@@ -1387,7 +1419,7 @@ function gridSel() {
 
 /* ----- cửa sổ phụ ----- */
 function openModal(title, node) { $("#mTitle").textContent = title; const b = $("#mBody"); b.innerHTML = ""; b.appendChild(node); $("#modal").classList.remove("hidden"); }
-function closeModal() { $("#modal").classList.add("hidden"); $("#mBody").innerHTML = ""; }
+function closeModal() { $(".mbox").classList.remove("big"); $("#modal").classList.add("hidden"); $("#mBody").innerHTML = ""; }
 $("#mClose").onclick = closeModal;
 $("#modal").addEventListener("pointerdown", (e) => { if (e.target.id === "modal") closeModal(); });
 function openRestore() {
@@ -1409,19 +1441,28 @@ function openRestore() {
 function wbsPick(keys) {
   if (!wbs) return status("Chưa có dữ liệu WBS cho dự án này", 3000);
   if (!me) return status("Cần đăng nhập để gắn vào WBS", 3000);
-  const B = el("div"), q = el("input"); q.type = "search"; q.placeholder = "Tìm hạng mục (tên, nhóm, STT)…"; B.appendChild(q);
+  wbsChoose("Gắn " + keys.length + " trang vào hạng mục WBS", (id) => addToWbs(id, keys));
+}
+function wbsChoose(title, onPick) {
+  if (!wbs) return status("Chưa có dữ liệu WBS cho dự án này", 3000);
+  if (!me) return status("Cần đăng nhập", 3000);
+  const B = el("div"), q = el("input"); q.type = "search"; q.placeholder = "Tìm hạng mục (mã code, tên, nhóm, STT)…"; B.appendChild(q);
   const list = el("div", "mlist"); B.appendChild(list);
   const draw = () => {
     list.innerHTML = ""; const nq = norm(q.value); let c = 0;
     for (const { z, p, it } of allWbsItems()) {
-      if (nq && !norm(it.stt + " " + it.name + " " + it.cat + " " + p.title).includes(nq)) continue;
+      const cd = codeOf(it.id);
+      if (nq && !norm(cd + " " + it.stt + " " + it.name + " " + it.cat + " " + p.title).includes(nq)) continue;
       if (++c > 80) break;
-      const r = el("div", "mrow"); r.append(el("b", null, it.stt + ". " + it.name), el("small", null, z.title + " · " + p.title + " · " + it.cat));
-      r.onclick = () => { addToWbs(it.id, keys); closeModal(); }; list.appendChild(r);
+      const r = el("div", "mrow"); const b = el("b");
+      if (cd) b.appendChild(el("span", "cdb", cd));
+      b.appendChild(document.createTextNode(it.stt + ". " + it.name));
+      r.append(b, el("small", null, z.title + " · " + p.title + " · " + it.cat));
+      r.onclick = () => { closeModal(); onPick(it.id); }; list.appendChild(r);
     }
     if (!c) list.appendChild(el("div", "wbox", "Không có hạng mục phù hợp"));
   };
-  q.oninput = draw; draw(); openModal("Gắn " + keys.length + " trang vào hạng mục WBS", B); q.focus();
+  q.oninput = draw; draw(); openModal(title, B); q.focus();
 }
 function addToWbs(id, keys) {
   const st = wbsState(id); st.extra = st.extra || []; let n = 0;
@@ -1429,6 +1470,155 @@ function addToWbs(id, keys) {
   st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave();
   status("Đã gắn " + n + " trang vào hạng mục", 3000);
   $("#side").classList.remove("hidden"); setSideTab("wbs"); openWbsItem(id, true);
+}
+
+/* ================= WBS: mã code · ghi chú + hình · cắt hình ================= */
+const touchSt = (st) => { st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); };
+function codeOf(id) {
+  const m = me && notes[me.email] && notes[me.email].wbs && notes[me.email].wbs[id];
+  if (m && m.code != null) return m.code;
+  for (const d of Object.values(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.code) return r.code; }
+  return "";
+}
+function imgsOf(id) { // hình của mọi người cho hạng mục
+  const o = [];
+  for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.imgs) for (const im of r.imgs) o.push({ im, owner, d, mine: !!me && owner === me.email }); }
+  return o;
+}
+const imgUrlCache = new Map();
+function imgUrl(id) { if (!imgUrlCache.has(id)) imgUrlCache.set(id, Promise.resolve(src.imageUrl(id))); return imgUrlCache.get(id); }
+function imgEl(im) { const i = el("img"); i.alt = ""; i.draggable = false; imgUrl(im.id).then((u) => { i.src = u; }).catch(() => { i.alt = "(không tải được hình)"; }); return i; }
+async function toJpeg(b, max = 1600) {
+  let cv;
+  if (b instanceof HTMLCanvasElement) cv = b;
+  else {
+    const bm = await createImageBitmap(b), s = Math.min(1, max / Math.max(bm.width, bm.height));
+    cv = document.createElement("canvas"); cv.width = Math.max(1, Math.round(bm.width * s)); cv.height = Math.max(1, Math.round(bm.height * s));
+    const c = cv.getContext("2d"); c.fillStyle = "#fff"; c.fillRect(0, 0, cv.width, cv.height); c.drawImage(bm, 0, 0, cv.width, cv.height);
+  }
+  return new Promise((r) => cv.toBlob(r, "image/jpeg", 0.86));
+}
+async function addImg(id, blob, info) {
+  if (!me) return status("Cần đăng nhập để thêm hình", 3000);
+  status("Đang lưu hình…", 0);
+  try {
+    const iid = await src.saveImage(blob);
+    imgUrlCache.set(iid, Promise.resolve(URL.createObjectURL(blob)));
+    const st = wbsState(id); (st.imgs = st.imgs || []).push(Object.assign({ id: iid, t: new Date().toISOString().slice(0, 10) }, info ? { src: info } : {}));
+    touchSt(st); queueSave(); status("Đã thêm hình vào hạng mục", 2500); return true;
+  } catch (e) { status("Lưu hình lỗi: " + e.message, 7000); return false; }
+}
+function delImg(id, iid) { const st = wbsState(id); st.imgs = (st.imgs || []).filter((x) => x.id !== iid); touchSt(st); queueSave(); }
+function lightbox(id, im) {
+  const o = el("div"); o.id = "lb"; const i = imgEl(im); o.appendChild(i);
+  const bar = el("div", "lbb");
+  if (im.src && board && board.docs[im.src.doc]) { const g = el("button", null, "→ Đến trang gốc"); g.onclick = (e) => { e.stopPropagation(); o.remove(); closeModal(); goPage(im.src.doc, im.src.page); }; bar.appendChild(g); }
+  const nt = el("button", null, "Mở tab mới"); nt.onclick = (e) => { e.stopPropagation(); imgUrl(im.id).then((u) => window.open(u, "_blank")); }; bar.appendChild(nt);
+  const cl = el("button", null, "✕ Đóng"); cl.onclick = () => o.remove(); bar.appendChild(cl);
+  o.appendChild(bar); o.onclick = (e) => { if (e.target === o) o.remove(); };
+  document.addEventListener("keydown", function esc(e) { if (e.key === "Escape") { o.remove(); document.removeEventListener("keydown", esc); } });
+  document.body.appendChild(o);
+}
+function thumbs(id, onChange) {
+  const g = el("div", "wthumbs");
+  const all = imgsOf(id);
+  if (!all.length) g.appendChild(el("div", "wbox", "Chưa có hình. Dán (Ctrl+V), thêm file, hoặc dùng ✂ Cắt hình từ bảng."));
+  for (const { im, owner, d, mine } of all) {
+    const t = el("div", "th"); t.title = (mine ? "Bạn" : (d.author || owner)) + " · " + (im.t || "") + (im.src ? " · cắt từ tr." + im.src.page : "");
+    t.appendChild(imgEl(im)); t.onclick = () => lightbox(id, im);
+    if (im.src) t.appendChild(el("span", "tg", "✂"));
+    if (mine) { const x = el("button", "tx2", "✕"); x.title = "Xoá hình"; x.onclick = (e) => { e.stopPropagation(); if (!confirm("Xoá hình này khỏi hạng mục?")) return; delImg(id, im.id); onChange && onChange(); }; t.appendChild(x); }
+    g.appendChild(t);
+  }
+  return g;
+}
+async function pasteFiles(id, files, after) {
+  let n = 0; for (const f of files) { if (!/^image\//.test(f.type)) continue; const b = await toJpeg(f); if (await addImg(id, b)) n++; }
+  if (n) after && after();
+}
+/* cửa sổ pop-up ghi chú + hình của 1 hạng mục */
+function openWbsNote(id) {
+  const f = allWbsItems().find((x) => x.it.id === id); if (!f) return; const { z, p, it } = f;
+  const st = me ? wbsState(id) : { note: "", imgs: [], code: codeOf(id) };
+  const B = el("div", "wnote");
+  const top = el("div", "wnh");
+  const ci = el("input"); ci.placeholder = "Mã code"; ci.value = codeOf(id); ci.disabled = !me; ci.className = "cdin";
+  ci.oninput = () => { st.code = ci.value.trim(); touchSt(st); queueSave(); }; ci.onchange = () => renderWbs();
+  const tt = el("div", "wnt"); tt.append(el("b", null, it.stt + ". " + it.name), el("small", null, z.title + " · " + p.title + " · " + it.cat));
+  top.append(ci, tt); B.appendChild(top);
+  const ta = el("textarea"); ta.placeholder = me ? "Ghi chú / tình trạng hạng mục… (có thể dán hình bằng Ctrl+V)" : "Đăng nhập để ghi chú"; ta.value = st.note || ""; ta.disabled = !me; ta.rows = 6;
+  let tmr = 0; ta.oninput = () => { st.note = ta.value; touchSt(st); queueSave(); clearTimeout(tmr); tmr = setTimeout(renderWbs, 700); };
+  B.appendChild(ta);
+  const bar = el("div", "wnb");
+  const fi = el("input"); fi.type = "file"; fi.accept = "image/*"; fi.multiple = true; fi.style.display = "none";
+  fi.onchange = async () => { await pasteFiles(id, [...fi.files], redraw); fi.value = ""; };
+  const b1 = el("button", null, "＋ Thêm ảnh"); b1.onclick = () => fi.click();
+  const b2 = el("button", null, "📋 Dán ảnh"); b2.title = "Hoặc bấm Ctrl+V"; b2.onclick = async () => {
+    try { const items = await navigator.clipboard.read(); const fl = []; for (const itm of items) for (const ty of itm.types) if (/^image\//.test(ty)) fl.push(new File([await itm.getType(ty)], "p", { type: ty })); if (!fl.length) return status("Clipboard chưa có hình", 2500); await pasteFiles(id, fl, redraw); } catch (e) { status("Bấm Ctrl+V trong cửa sổ này để dán hình", 3500); }
+  };
+  const b3 = el("button", null, "✂ Cắt hình từ bảng"); b3.title = "Cắt một vùng trên trang của bảng rồi thêm vào hạng mục này"; b3.onclick = () => startCrop(id, true);
+  if (!me) [b1, b2, b3].forEach((b) => (b.disabled = true));
+  bar.append(b1, b2, b3, fi); B.appendChild(bar);
+  const holder = el("div"); B.appendChild(holder);
+  const redraw = () => { holder.innerHTML = ""; holder.appendChild(thumbs(id, redraw)); renderWbs(); if (wbsCur === id) openWbsItem(id, true); };
+  holder.appendChild(thumbs(id, redraw));
+  for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
+  B.addEventListener("paste", (e) => { const fl = [...(e.clipboardData ? e.clipboardData.files : [])].filter((x) => /^image\//.test(x.type)); if (fl.length) { e.preventDefault(); pasteFiles(id, fl, redraw); } });
+  B.addEventListener("dragover", (e) => e.preventDefault());
+  B.addEventListener("drop", (e) => { const fl = [...e.dataTransfer.files].filter((x) => /^image\//.test(x.type)); if (fl.length) { e.preventDefault(); pasteFiles(id, fl, redraw); } });
+  $(".mbox").classList.add("big"); openModal("Ghi chú & hình · " + (codeOf(id) || it.stt), B); ta.focus();
+}
+/* đầu trang chi tiết: mã + nút + hình */
+function wbsHead(id, st) {
+  const w = el("div", "whd");
+  const row = el("div", "whr");
+  const ci = el("input", "cdin"); ci.placeholder = "Mã code"; ci.value = codeOf(id); ci.disabled = !me;
+  ci.oninput = () => { st.code = ci.value.trim(); touchSt(st); queueSave(); }; ci.onchange = () => renderWbs();
+  const b1 = el("button", "pri", "📝 Ghi chú & hình"); b1.onclick = () => openWbsNote(id);
+  const b2 = el("button", null, "✂ Cắt hình"); b2.title = "Cắt vùng trên bảng thêm vào hạng mục này"; b2.onclick = () => startCrop(id, false); b2.disabled = !me;
+  row.append(el("span", "lab", "Mã"), ci, b1, b2); w.appendChild(row);
+  if (imgsOf(id).length || st.note) w.appendChild(thumbs(id, () => { openWbsItem(id, true); renderWbs(); }));
+  return w;
+}
+/* cắt hình */
+function startCrop(id, fromPopup) {
+  if (!me) return status("Cần đăng nhập để cắt hình", 3000);
+  cropTarget = id; cropFromPopup = !!fromPopup; closeModal(); setTool("crop");
+  status("✂ Kéo chuột chọn vùng cần cắt trên một trang (Esc để huỷ)", 6000);
+}
+async function cropBlob(it, r, pel) {
+  if (it.type === "link" || it.kind === "sheet") throw new Error("loại trang này chưa hỗ trợ cắt");
+  const MAXW = 1800; let cv = document.createElement("canvas");
+  if (it.kind === "pdf") {
+    const pdf = await getPdf(it.doc), page = await pdf.getPage(it.page), v0 = page.getViewport({ scale: 1 });
+    const cw = (r[2] - r[0]) * v0.width, sc = Math.min(6, MAXW / cw), v = page.getViewport({ scale: sc });
+    cv.width = Math.max(1, Math.round(cw * sc)); cv.height = Math.max(1, Math.round((r[3] - r[1]) * v0.height * sc));
+    const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    await page.render({ canvasContext: ctx, viewport: v, transform: [1, 0, 0, 1, -r[0] * v.width, -r[1] * v.height] }).promise;
+  } else {
+    let im = new Image();
+    try { im.src = cache.get(it.src) || await src.blobUrl(it.src); await im.decode(); }
+    catch (e) { const vi = pel && pel.querySelector("img"); if (vi && vi.naturalWidth) im = vi; else throw new Error("không đọc được hình trang này"); }
+    const sx = r[0] * im.naturalWidth, sy = r[1] * im.naturalHeight, sw = (r[2] - r[0]) * im.naturalWidth, sh = (r[3] - r[1]) * im.naturalHeight, s = Math.min(1, MAXW / sw);
+    cv.width = Math.max(1, Math.round(sw * s)); cv.height = Math.max(1, Math.round(sh * s));
+    const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); ctx.drawImage(im, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+  }
+  return new Promise((res) => cv.toBlob(res, "image/jpeg", 0.88));
+}
+async function cropDone(d) {
+  const n = d.n; if (!n) return;
+  const it = n.it, cl = (v) => Math.max(0, Math.min(1, v));
+  const r = [cl((Math.min(d.x0, d.x1) - it.x) / it.w), cl((Math.min(d.y0, d.y1) - it.y) / it.h), cl((Math.max(d.x0, d.x1) - it.x) / it.w), cl((Math.max(d.y0, d.y1) - it.y) / it.h)];
+  if (r[2] - r[0] < 0.01 || r[3] - r[1] < 0.01) return status("Vùng cắt quá nhỏ", 2500);
+  const target = cropTarget, fromPopup = cropFromPopup; cropTarget = null; cropFromPopup = false; setTool("select");
+  status("Đang cắt hình…", 0);
+  let blob; try { blob = await cropBlob(it, r, n.el); } catch (e) { return status("Không cắt được: " + e.message, 6000); }
+  const info = { doc: it.doc, page: it.page, r: r.map((v) => Math.round(v * 1e4) / 1e4) };
+  const done = async (id) => {
+    if (!(await addImg(id, blob, info))) return;
+    $("#side").classList.remove("hidden"); setSideTab("wbs"); renderWbs(); openWbsItem(id, true); if (fromPopup) openWbsNote(id);
+  };
+  if (target) done(target); else { status("", 1); wbsChoose("Thêm hình cắt vào hạng mục WBS", done); }
 }
 
 

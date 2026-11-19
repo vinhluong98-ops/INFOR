@@ -62,7 +62,7 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 /* ---- WBS Dictionary ---- */
 #sideTabs{display:flex;gap:4px;margin-bottom:8px;position:sticky;top:-8px;background:#fff;padding:8px 0 4px;z-index:2}
 #sideTabs button{flex:1}
-#side.wide{width:380px}
+#side.wide{width:min(450px,36vw)}
 .wz{font-weight:700;padding:6px;background:#f1f5f9;border-radius:6px;margin:6px 0 2px}
 .wp{font-weight:600;padding:6px 6px 2px;color:#0f172a}
 .wp small{display:block;font-weight:400;color:#64748b;font-size:11px}
@@ -75,7 +75,7 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 .bdg.w{background:#d97706}.bdg.r{background:#dc2626}.bdg.ok{background:#16a34a}.bdg.g{background:#94a3b8}
 #wbsFilter{display:flex;gap:6px;align-items:center;font-size:12px;margin-bottom:6px}
 #wbsFilter input[type=search]{flex:1;padding:5px 8px;border:1px solid #cbd5e1;border-radius:6px;font:inherit}
-#wbsd{position:fixed;top:48px;right:0;bottom:0;width:430px;background:#fff;border-left:1px solid #e2e8f0;z-index:16;display:flex;flex-direction:column}
+#wbsd{position:fixed;top:48px;right:0;bottom:0;width:min(600px,46vw);background:#fff;border-left:1px solid #e2e8f0;z-index:16;display:flex;flex-direction:column}
 #wbsdBody{overflow:auto;padding:10px 12px;flex:1;font-size:13px}
 #wbsdBody h3{margin:0 0 2px;font-size:16px}
 #wbsdBody .sub{color:#64748b;font-size:12px;margin-bottom:8px}
@@ -194,3 +194,33 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 .mrow:hover{background:#eff6ff}
 .mrow small{display:block;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 button.primary{background:#2563eb;color:#fff;border-color:#2563eb;align-self:flex-start;margin-top:4px}
+
+/* WBS: mã, ghi chú, hình */
+.cdin{border:1px solid #cbd5e1;border-radius:6px;padding:3px 6px;font:inherit;font-size:12px;width:110px;background:#fff;font-weight:600;color:#0f172a}
+.cdin.sm{flex:none;width:62px;padding:1px 4px;font-size:11px;align-self:center}
+.cdin:disabled{background:#f1f5f9;color:#475569}
+.wi .nb{flex:none;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font-size:11px;padding:0 5px;cursor:pointer;align-self:center;color:#94a3b8}
+.wi .nb.has{border-color:#2563eb;color:#1d4ed8;background:#eff6ff}
+.cdb{display:inline-block;background:#1e293b;color:#fff;border-radius:5px;padding:0 6px;margin-right:6px;font-size:11px;font-weight:700}
+.whd{border:1px solid #cbd5e1;background:#f8fafc;border-radius:8px;padding:8px;margin-bottom:6px}
+.whr{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.whr .lab{font-size:12px;font-weight:700;color:#475569}
+.whr button,.wnb button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;font:inherit;font-size:12px}
+.whr button.pri{background:#2563eb;color:#fff;border-color:#2563eb}
+.whr button:disabled,.wnb button:disabled{opacity:.5;cursor:default}
+.wthumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px}
+.wthumbs .wbox{grid-column:1/-1;margin:0}
+.th{position:relative;border:1px solid #cbd5e1;border-radius:8px;overflow:hidden;background:#f1f5f9;aspect-ratio:4/3;cursor:zoom-in}
+.th img{width:100%;height:100%;object-fit:cover;display:block}
+.th .tx2{position:absolute;top:3px;right:3px;border:0;background:rgba(15,23,42,.7);color:#fff;border-radius:50%;width:20px;height:20px;cursor:pointer;font-size:11px;line-height:1;padding:0}
+.th .tg{position:absolute;left:4px;bottom:4px;background:rgba(37,99,235,.9);color:#fff;border-radius:4px;font-size:11px;padding:0 4px}
+.mbox.big{width:min(960px,96vw);max-height:92vh}
+.wnote{display:flex;flex-direction:column;gap:8px}
+.wnh{display:flex;gap:10px;align-items:center}.wnt{display:flex;flex-direction:column}.wnt small{color:#64748b}
+.wnote textarea{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;font:inherit;resize:vertical;min-height:110px}
+.wnb{display:flex;gap:6px;flex-wrap:wrap}
+.wnote .wthumbs{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+#lb{position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:70;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px}
+#lb img{max-width:94vw;max-height:84vh;border-radius:6px;background:#fff}
+#lb .lbb{display:flex;gap:8px}#lb .lbb button{border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
+body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(600px,46vw) + 12px)}
