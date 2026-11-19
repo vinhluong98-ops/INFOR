@@ -599,7 +599,7 @@ $("#btnWbs").onclick = () => {
   if (open) { $("#side").classList.add("hidden"); closeWbsd(); } else { $("#side").classList.remove("hidden"); setSideTab("wbs"); }
 };
 $("#wbsdClose").onclick = closeWbsd;
-function closeWbsd() { $("#wbsd").classList.add("hidden"); wbsCur = null; document.querySelectorAll(".wi.cur").forEach((e) => e.classList.remove("cur")); clearHl(); }
+function closeWbsd() { $("#wbsd").classList.add("hidden"); wbsCur = null; if (typeof renderSelBar === "function") renderSelBar(); document.querySelectorAll(".wi.cur").forEach((e) => e.classList.remove("cur")); clearHl(); }
 function renderWbs() {
   const box = $("#wbsList"); box.innerHTML = "";
   const f = el("div"); f.id = "wbsFilter";
@@ -660,9 +660,10 @@ function openWbsItem(id, noFocus) {
   sc.textContent = "Báo giá (BOQ): NEM · Ma trận phạm vi cho '" + it.cat + "': " + it.matrix + (it.matrix === "NEM" ? " ✓ khớp" : it.matrix === "Central" ? " ✗ không khớp" : " (chưa có nhà thầu trong ma trận)"); B.appendChild(sc);
   if (it.desc) { B.appendChild(el("h4", null, "Mô tả vật liệu theo BOQ")); const d = el("div", "wbox"); d.style.whiteSpace = "pre-wrap"; d.textContent = it.desc; B.appendChild(d); }
   if (it.warnings.length) { B.appendChild(el("h4", null, "Cần rà soát")); for (const w of it.warnings) B.appendChild(el("div", "wbox warn", "⚠ " + w)); }
-  const linkRow = (key, title, sub, click, conf) => {
+  const linkRow = (key, title, sub, click, conf, pg) => {
     const r = el("div", "lk"); const c = el("div", "c"); c.appendChild(el("b", null, title)); if (sub) c.appendChild(el("small", null, sub)); if (conf) c.appendChild(el("small", "cf", conf));
     r.appendChild(c); r.onclick = click;
+    if (pg && me) { const m0 = mainOf(id), on = m0 && m0.doc === pg.doc && m0.page === pg.page; const sb = el("button", "v" + (on ? " ok" : ""), "★"); sb.title = on ? "Đang là bản vẽ minh họa" : "Đặt làm bản vẽ minh họa của hạng mục"; sb.onclick = (e) => { e.stopPropagation(); setMain(id, pg.doc, pg.page); }; r.appendChild(sb); }
     if (key) {
       const v = el("button", "v", "?"); const paint = () => { const s = st.links[key]; v.className = "v" + (s === "ok" ? " ok" : s === "no" ? " no" : ""); v.textContent = s === "ok" ? "✓" : s === "no" ? "✗" : "?"; v.title = "Bấm để duyệt: ? → ✓ đúng → ✗ sai"; };
       paint(); v.onclick = (e) => { e.stopPropagation(); if (!me) return status("Cần đăng nhập để duyệt", 3000); st.links[key] = !st.links[key] ? "ok" : st.links[key] === "ok" ? "no" : ""; paint(); queueSave(); };
@@ -670,12 +671,13 @@ function openWbsItem(id, noFocus) {
     }
     return r;
   };
+  B.appendChild(mainBox(id, it));
   B.appendChild(el("h4", null, "SPEC (" + it.specs.length + ")"));
   if (!it.specs.length) B.appendChild(el("div", "wbox warn", "Chưa có mã SPEC gắn với dòng này."));
-  for (const s of it.specs) B.appendChild(linkRow("s:" + s.code, s.code + " · " + s.desc, s.loc + " · " + s.product + " · NCC: " + s.supplier, () => goPage(s.doc, s.page), s.conf === "cao" ? "Gợi ý: khớp tên" : "Gợi ý: tham khảo, cần xác nhận"));
+  for (const s of it.specs) B.appendChild(linkRow("s:" + s.code, s.code + " · " + s.desc, s.loc + " · " + s.product + " · NCC: " + s.supplier, () => goPage(s.doc, s.page), s.conf === "cao" ? "Gợi ý: khớp tên" : "Gợi ý: tham khảo, cần xác nhận", { doc: s.doc, page: s.page }));
   B.appendChild(el("h4", null, "Bản vẽ (" + it.drawings.length + ")"));
   if (!it.drawings.length) B.appendChild(el("div", "wbox warn", "Chưa có bản vẽ DD cho dòng này."));
-  for (const d of it.drawings) B.appendChild(linkRow("d:" + d.page, d.label, "Trang " + d.page + " – DD 1st Submission", () => goPage(d.doc, d.page)));
+  for (const d of it.drawings) B.appendChild(linkRow("d:" + d.page, d.label, "Trang " + d.page + " – DD 1st Submission", () => goPage(d.doc, d.page), null, { doc: d.doc, page: d.page }));
   { // trang người dùng tự gắn từ bảng
     const ex = [];
     for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.extra) for (const x of r.extra) ex.push({ x, owner, d, mine: !!me && owner === me.email }); }
@@ -683,7 +685,7 @@ function openWbsItem(id, noFocus) {
     if (!ex.length) B.appendChild(el("div", "wbox", "Chọn trang trên bảng rồi bấm “＋ WBS” để gắn vào hạng mục này."));
     for (const e2 of ex) {
       const dd = board.docs[e2.x.doc];
-      const r = linkRow(null, (dd ? dd.name : e2.x.doc) + " · tr." + e2.x.page, e2.mine ? "Bạn gắn" : "Bởi " + (e2.d.author || e2.owner), () => goPage(e2.x.doc, e2.x.page));
+      const r = linkRow(null, (dd ? dd.name : e2.x.doc) + " · tr." + e2.x.page, e2.mine ? "Bạn gắn" : "Bởi " + (e2.d.author || e2.owner), () => goPage(e2.x.doc, e2.x.page), null, { doc: e2.x.doc, page: e2.x.page });
       if (e2.mine) { const rm = el("button", "v", "✕"); rm.title = "Bỏ gắn"; rm.onclick = (ev) => { ev.stopPropagation(); st.extra = st.extra.filter((q) => q !== e2.x); queueSave(); openWbsItem(id, true); }; r.appendChild(rm); }
       B.appendChild(r);
     }
@@ -715,7 +717,8 @@ function openWbsItem(id, noFocus) {
   const peers = wbsPeers(id); if (peers.length) B.appendChild(el("div", "who", "Đã duyệt bởi: " + peers.join(", ")));
   for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
   // đưa bản vẽ chính lên màn hình
-  const first = it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page);
+  const first = mainOf(id) || it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page);
+  renderSelBar();
 }
 
 /* ================= BỐ CỤC 4 CỘT: BOQ · BẢN VẼ · SPEC · CÁC HS KHÁC ================= */
@@ -1125,6 +1128,7 @@ function renderSelBar() {
     const clr = el("i", "clr", "∅"); clr.title = "Bỏ đánh dấu"; clr.onclick = () => setMark(pk, ""); sw.appendChild(clr);
     bar.appendChild(sw);
     btn("＋ WBS", "Gắn các trang đã chọn vào một hạng mục WBS", () => wbsPick(pk));
+    if (wbsCur && pk.length === 1 && me) { const [d0, p0] = pk[0].split("#"); btn("★ Bản vẽ minh họa cho hạng mục đang mở", "Đặt trang này làm bản vẽ minh họa của hạng mục WBS đang mở", () => setMain(wbsCur, d0, +p0), "pri"); }
   }
   if (editMode) {
     bar.appendChild(el("span", "sep"));
@@ -1478,6 +1482,39 @@ function addToWbs(id, keys) {
   st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave();
   status("Đã gắn " + n + " trang vào hạng mục", 3000);
   $("#side").classList.remove("hidden"); setSideTab("wbs"); openWbsItem(id, true);
+}
+
+/* bản vẽ minh họa của hạng mục (chọn lại được) */
+function mainOf(id) {
+  const m = me && notes[me.email] && notes[me.email].wbs && notes[me.email].wbs[id];
+  if (m && m.main !== undefined) return m.main || null;
+  for (const d of Object.values(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.main) return r.main; }
+  return null;
+}
+function setMain(id, doc, page) {
+  if (!me) return status("Cần đăng nhập để chọn bản vẽ minh họa", 3000);
+  const st = wbsState(id); st.main = doc ? { doc, page } : ""; touchSt(st); queueSave();
+  status(doc ? "Đã đặt bản vẽ minh họa mới cho hạng mục" : "Đã trả về bản vẽ mặc định", 2500);
+  if (wbsCur === id) openWbsItem(id, true);
+}
+function mainBox(id, it) {
+  const w = el("div", "mainbox"), m = mainOf(id), cur = m || it.drawings[0] || it.specs[0];
+  w.appendChild(el("h4", null, "Bản vẽ minh họa"));
+  const row = el("div", "mrw");
+  if (cur) {
+    const n = nodeEls.get(cur.doc + "#" + cur.page), th = el("div", "mth");
+    if (n) { const i = el("img"), s0 = n.el.querySelector("img"); if (s0 && s0.src) i.src = s0.src; else if (n.it.thumb) loadImg(n.it.thumb, (u) => { i.src = u; }); th.appendChild(i); }
+    th.onclick = () => goPage(cur.doc, cur.page); row.appendChild(th);
+    const dd = board.docs[cur.doc], tx = el("div", "mtx"); tx.append(el("b", null, (dd ? dd.name : cur.doc) + " · tr." + cur.page), el("small", null, m ? "Do bạn/nhóm chọn" : "Mặc định (gợi ý tự động)")); row.appendChild(tx);
+  } else row.appendChild(el("div", "wbox", "Chưa có bản vẽ minh họa."));
+  w.appendChild(row);
+  const bar = el("div", "wnb");
+  const b1 = el("button", "pri", "↻ Chọn lại"); b1.title = "Bấm chọn 1 trang trên bảng rồi bấm ★ ở thanh dưới";
+  b1.onclick = () => { setTool("select"); status("Bấm chọn 1 trang trên bảng, rồi bấm “★ Bản vẽ minh họa…” ở thanh dưới (hoặc ★ ở dòng bản vẽ bên dưới)", 8000); };
+  bar.appendChild(b1);
+  if (m) { const b2 = el("button", null, "Về mặc định"); b2.onclick = () => setMain(id, null); bar.appendChild(b2); }
+  if (!me) bar.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  w.appendChild(bar); return w;
 }
 
 /* ================= WBS: mã code · ghi chú + hình · cắt hình ================= */

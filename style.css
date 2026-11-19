@@ -151,7 +151,7 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 #colors{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;padding:2px 4px}
 #colors i{width:16px;height:16px;border-radius:50%;cursor:pointer;display:block;box-shadow:0 0 0 1px #cbd5e1;margin:auto}
 #colors i.on{box-shadow:0 0 0 2px #fff,0 0 0 4px #1e293b}
-#bars{position:fixed;bottom:58px;left:50%;transform:translateX(-50%);z-index:18;display:flex;flex-direction:column-reverse;align-items:center;gap:6px;pointer-events:none}
+#bars{position:fixed;bottom:84px;left:50%;transform:translateX(-50%);z-index:18;display:flex;flex-direction:column-reverse;align-items:center;gap:6px;pointer-events:none}
 .bar{pointer-events:auto;display:flex;align-items:center;gap:4px;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:5px 8px;box-shadow:0 4px 14px rgba(15,23,42,.18);white-space:nowrap}
 .bar b{font-size:13px;margin-right:4px}
 .bar button{padding:3px 8px}
@@ -227,3 +227,8 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(600px,46vw) + 12px)}
 .wnb small{color:#64748b;align-self:center}
 #wbsdBody .wnb{margin:6px 0 0}
 .wnb button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;font:inherit;font-size:12px}
+.mainbox .mrw{display:flex;gap:10px;align-items:center;border:1px solid #cbd5e1;border-radius:8px;padding:6px;background:#fff}
+.mth{flex:none;width:150px;aspect-ratio:4/3;background:#f1f5f9;border-radius:6px;overflow:hidden;cursor:pointer;border:1px solid #e2e8f0}
+.mth img{width:100%;height:100%;object-fit:contain;display:block}
+.mtx{display:flex;flex-direction:column;min-width:0}.mtx small{color:#64748b}
+.mainbox .wnb button.pri,#selbar button.pri{background:#2563eb;color:#fff;border-color:#2563eb}
