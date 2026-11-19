@@ -628,8 +628,6 @@ function renderWbs() {
           if (it.warnings.length) { const b = el("span", "bdg " + (it.matrix === "Central" ? "r" : "w"), "⚠" + it.warnings.length); t.appendChild(b); }
           if (wbsPeers(it.id).length) t.appendChild(el("span", "bdg ok", "✓"));
           r.appendChild(t); r.appendChild(el("span", "q", it.qty != null ? it.qty.toLocaleString("vi-VN") + " " + it.unit : ""));
-          { const ni = imgsOf(it.id).length, hasN = [...Object.values(notes)].some((d) => d.wbs && d.wbs[it.id] && d.wbs[it.id].note);
-            const nb = el("button", "nb" + (ni || hasN ? " has" : ""), "📝" + (ni ? ni : "")); nb.title = "Ghi chú & hình của hạng mục (mở cửa sổ)"; nb.onclick = (e) => { e.stopPropagation(); openWbsNote(it.id); }; r.appendChild(nb); }
           r.onclick = () => openWbsItem(it.id); box.appendChild(r);
         }
       }
@@ -655,7 +653,6 @@ function openWbsItem(id, noFocus) {
   const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
   B.appendChild(el("h3", null, it.stt + ". " + it.name));
   B.appendChild(el("div", "sub", it.cat + (it.qty != null ? " · " + it.qty.toLocaleString("vi-VN") + " " + it.unit : "") + " · BOQ NEM mục: " + it.boq_group));
-  B.appendChild(wbsHead(id, st));
   // phạm vi
   B.appendChild(el("h4", null, "Phạm vi"));
   const sc = el("div", "wbox" + (it.matrix === "NEM" ? "" : " err"));
@@ -701,9 +698,20 @@ function openWbsItem(id, noFocus) {
     c.onchange = () => { st.chk[k] = c.checked; st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave(); renderWbs(); };
     l.append(c, document.createTextNode(" " + lab)); B.appendChild(l);
   }
-  const ta = el("textarea"); ta.placeholder = me ? "Ghi chú của bạn…" : "Đăng nhập để ghi chú"; ta.value = st.note || ""; ta.disabled = !me;
+  const ta = el("textarea"); ta.placeholder = me ? "Ghi chú của bạn… (Ctrl+V để dán hình)" : "Đăng nhập để ghi chú"; ta.value = st.note || ""; ta.disabled = !me;
   ta.oninput = () => { st.note = ta.value; st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); queueSave(); };
   B.appendChild(ta);
+  { // hình mô tả tình trạng: dán Ctrl+V vào ô ghi chú, thêm file, hoặc cắt từ bảng
+    const holder = el("div"), redraw = () => { holder.innerHTML = ""; holder.appendChild(thumbs(id, redraw)); renderWbs(); };
+    const bar = el("div", "wnb"), fi = el("input"); fi.type = "file"; fi.accept = "image/*"; fi.multiple = true; fi.style.display = "none";
+    fi.onchange = async () => { await pasteFiles(id, [...fi.files], redraw); fi.value = ""; };
+    const b1 = el("button", null, "＋ Thêm ảnh"), b3 = el("button", null, "✂ Cắt hình từ bảng"); b1.onclick = () => fi.click(); b3.onclick = () => startCrop(id, false);
+    b3.title = "Kéo chọn vùng trên một trang của bảng để thêm vào hạng mục này";
+    if (!me) { b1.disabled = true; b3.disabled = true; }
+    bar.append(b1, b3, el("small", null, "Hoặc bấm Ctrl+V trong ô ghi chú để dán hình"), fi); B.appendChild(bar);
+    ta.addEventListener("paste", (e) => { const fl = [...(e.clipboardData ? e.clipboardData.files : [])].filter((x) => /^image\//.test(x.type)); if (fl.length) { e.preventDefault(); pasteFiles(id, fl, redraw); } });
+    holder.appendChild(thumbs(id, redraw)); B.appendChild(holder);
+  }
   const peers = wbsPeers(id); if (peers.length) B.appendChild(el("div", "who", "Đã duyệt bởi: " + peers.join(", ")));
   for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
   // đưa bản vẽ chính lên màn hình

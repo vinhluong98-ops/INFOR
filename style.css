@@ -224,3 +224,6 @@ button.primary{background:#2563eb;color:#fff;border-color:#2563eb;align-self:fle
 #lb img{max-width:94vw;max-height:84vh;border-radius:6px;background:#fff}
 #lb .lbb{display:flex;gap:8px}#lb .lbb button{border:0;border-radius:8px;padding:6px 12px;cursor:pointer;font:inherit}
 body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(600px,46vw) + 12px)}
+.wnb small{color:#64748b;align-self:center}
+#wbsdBody .wnb{margin:6px 0 0}
+.wnb button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;font:inherit;font-size:12px}
