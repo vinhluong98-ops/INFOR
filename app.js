@@ -571,6 +571,11 @@ function setSideTab(t) {
   if (t !== "wbs") closeWbsd();
 }
 document.querySelectorAll("#sideTabs button").forEach((b) => (b.onclick = () => setSideTab(b.dataset.tab)));
+$("#btnClaude").onclick = () => {
+  // gọi script ClaudeDock trên máy (giao thức claudedock://, cài bằng Cai_dat.bat). Lần đầu Chrome hỏi → tick "luôn cho phép".
+  const a = document.createElement("a"); a.href = "claudedock://toggle"; document.body.appendChild(a); a.click(); a.remove();
+  if (!localStorage.getItem("pb_dock_hint")) { localStorage.setItem("pb_dock_hint", "1"); status("Nếu Chrome hỏi mở ứng dụng: tick 'luôn cho phép'. Chưa có gì xảy ra → chạy Cai_dat.bat của ClaudeDock.", 9000); }
+};
 $("#btnWbs").onclick = () => {
   const open = !$("#side").classList.contains("hidden") && !$("#wbsList").classList.contains("hidden");
   if (open) { $("#side").classList.add("hidden"); closeWbsd(); } else { $("#side").classList.remove("hidden"); setSideTab("wbs"); }
