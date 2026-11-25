@@ -237,3 +237,5 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 #wbsdBody{overflow-wrap:anywhere}
 #wbsdBody .wnb{flex-wrap:wrap}
 .wthumbs{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
+
+.grp.drop{outline:calc(6px * var(--inv)) dashed #2563eb;outline-offset:calc(4px * var(--inv));background:#eff6ff}

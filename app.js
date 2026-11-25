@@ -157,6 +157,43 @@ function DriveSource(rootId) {
       if (!r.id) throw new Error("Drive không nhận hình"); return r.id;
     },
     async imageUrl(id) { return URL.createObjectURL(await (await gfetch(`${API}/${id}?alt=media&supportsAllDrives=true`)).blob()); },
+    async ensureFolder(dir) { // tạo dần các thư mục con nếu chưa có
+      let cur = "", parent = rootId;
+      for (const part of dir.split("/")) {
+        cur = cur ? cur + "/" + part : part;
+        if (paths[cur + "/"]) { parent = paths[cur + "/"]; continue; }
+        const r = await (await gfetch(API + "?supportsAllDrives=true", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: part, mimeType: "application/vnd.google-apps.folder", parents: [parent] }) })).json();
+        if (!r.id) throw new Error("không tạo được thư mục " + cur);
+        parent = paths[cur + "/"] = r.id;
+      }
+      return parent;
+    },
+    async upload(file, dir, onProg) {
+      await (origReady || Promise.resolve());
+      const fid = await this.ensureFolder(dir);
+      const nm = file.name.normalize("NFC"), m = nm.match(/^(.*?)(\.[^.]*)?$/);
+      let name = nm, p = dir + "/" + name, k = 2;
+      while (paths[p]) { name = m[1] + " (" + k++ + ")" + (m[2] || ""); p = dir + "/" + name; }
+      const type = file.type || "application/octet-stream", UP = "https://www.googleapis.com/upload/drive/v3/files?supportsAllDrives=true&fields=id,size,modifiedTime&uploadType=";
+      let res;
+      const init = await gfetch(UP + "resumable", { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": type }, body: JSON.stringify({ name, parents: [fid] }) });
+      const loc = init.headers.get("Location");
+      if (loc) {
+        res = await new Promise((ok, bad) => {
+          const x = new XMLHttpRequest(); x.open("PUT", loc); x.setRequestHeader("Content-Type", type);
+          x.upload.onprogress = (e) => onProg && e.total && onProg(e.loaded, e.total);
+          x.onload = () => (x.status < 300 ? ok(JSON.parse(x.responseText || "{}")) : bad(new Error(x.status + " " + x.responseText.slice(0, 150))));
+          x.onerror = () => bad(new Error("mất kết nối khi tải lên")); x.send(file);
+        });
+      } else if (file.size < 5e6) { // dự phòng khi trình duyệt không đọc được địa chỉ tải lên
+        const fd = new FormData();
+        fd.append("metadata", new Blob([JSON.stringify({ name, parents: [fid] })], { type: "application/json" })); fd.append("file", file);
+        res = await (await gfetch(UP + "multipart", { method: "POST", body: fd })).json();
+      } else throw new Error("Drive không trả địa chỉ tải lên cho file lớn");
+      if (!res.id) throw new Error("Drive không nhận file");
+      paths[p] = res.id; fmeta[p] = { size: +res.size || file.size, mt: res.modifiedTime || new Date().toISOString() };
+      return { path: p, size: fmeta[p].size, mt: fmeta[p].mt };
+    },
     async files() { await (origReady || Promise.resolve()); return Object.keys(fmeta).filter((p) => !p.startsWith("_BOARD/")).map((p) => ({ path: p, size: fmeta[p].size, mt: fmeta[p].mt })); },
     async loadNotes() {
       const nf = paths["_BOARD/notes/"]; if (!nf) return {};
@@ -527,6 +564,41 @@ function clearHl() { for (const h of hlEls) { if (h.classList.contains("pg")) h.
 /* ---------------- ghi chú ---------------- */
 let saveTimer;
 function myNotes() { const k = me ? me.email : "local"; if (!notes[k]) notes[k] = { author: me ? (me.name || me.email) : "local", notes: [], wbs: {} }; return notes[k]; }
+/* ----- kéo thả file từ máy vào một vùng: tải lên Drive (DROP_DIR) và đặt bộ vào vùng đó ----- */
+function colAt(e) { const p = toWorld(e); return (board && board.groups.find((g) => p.x >= g.x && p.x <= g.x + g.w)) || null; }
+function markDrop(id) { world.querySelectorAll(".grp.drop").forEach((x) => x.classList.remove("drop")); if (id) { const d = world.querySelector(`.grp[data-gid="${CSS.escape(id)}"]`); if (d) d.classList.add("drop"); } }
+const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+vp.addEventListener("dragover", (e) => { if (!hasFiles(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; const g = colAt(e); markDrop(g && g.id); });
+vp.addEventListener("dragleave", (e) => { if (!vp.contains(e.relatedTarget)) markDrop(null); });
+vp.addEventListener("drop", (e) => {
+  if (!hasFiles(e)) return; e.preventDefault(); markDrop(null);
+  const g = colAt(e); if (!g) return status("Thả file vào bên trong một vùng trên bảng", 3000);
+  dropFiles([...e.dataTransfer.files], g.id);
+});
+let dropBusy = false;
+async function dropFiles(fl, colId) {
+  if (!src || src.kind !== "drive" || !src.upload) return status("Chỉ thêm file được khi mở bảng từ Google Drive", 4000);
+  if (!me) return status("Cần đăng nhập Google để thêm file", 3000);
+  if (dropBusy) return status("Đang tải lên đợt trước, chờ xong rồi thả tiếp", 3000);
+  fl = fl.filter((f) => f.size > 0 || f.type);
+  if (!fl.length) return status("Chưa hỗ trợ kéo thả cả thư mục – hãy chọn các file bên trong", 4000);
+  dropBusy = true;
+  try {
+    if (!origDone) status("Đang đọc danh sách file trên Drive…", 0);
+    await (origReady || Promise.resolve());
+    if (layoutOwner !== me.email) { myNotes().layout = L = normL(L ? clone(L) : null); layoutOwner = me.email; renderLayoutSel(); }
+    const cols = colList(); let ordN = Math.max(-1, ...[...SETS.values()].filter((s) => setColOf(s, cols) === colId).map(ordOf)) + 1;
+    let ok = 0;
+    for (let i = 0; i < fl.length; i++) {
+      const f = fl[i];
+      try {
+        const r = await src.upload(f, DROP_DIR, (g, t) => status(`Đang tải lên Drive ${i + 1}/${fl.length}: ${f.name} – ${Math.round((g / t) * 100)}%`, 0));
+        files.push(r); L.sets["x" + hashStr(r.path)] = { col: colId, ord: ordN++ }; ok++;
+      } catch (err) { status("Không tải lên được " + f.name + ": " + err.message, 8000); await new Promise((res) => setTimeout(res, 2500)); }
+    }
+    if (ok) { commit(); rebuildBoard(); status(`Đã thêm ${ok} file vào vùng · lưu trên Drive: ${DROP_DIR}`, 5000); }
+  } finally { dropBusy = false; }
+}
 function toWorld(e) { const r = vp.getBoundingClientRect(); return { x: (e.clientX - r.left - view.x) / view.s, y: (e.clientY - r.top - view.y) / view.s }; }
 function addNoteAt(e) {
   if (!me) { status("Cần đăng nhập để ghi chú", 3000); return; }
@@ -741,6 +813,7 @@ const K = { colW: 2240, colGap: 160, colHead: 230, pad: 40, setHead: 120, setGap
 const keyOf = (it) => it.type === "link" ? "K:" + it.path : it.doc + "#" + it.page;
 const isPageKey = (k) => !k.startsWith("K:");
 const MK = { red: ["#dc2626", "Cần sửa"], amber: ["#f59e0b", "Cần xem lại"], green: ["#16a34a", "Đã duyệt"], blue: ["#2563eb", "Quan trọng"] };
+const DROP_DIR = "02-INCOMING/00-CHUA LOC", IMG_RE = /^(jpe?g|png|webp|gif|bmp)$/;
 const hashStr = (s2) => { let h = 5381; for (let i = 0; i < s2.length; i++) h = ((h << 5) + h + s2.charCodeAt(i)) | 0; return Math.abs(h).toString(36); };
 const r1 = (v) => Math.round(v * 10) / 10;
 let files = [], origDone = false, docsAll = {}, SETS = new Map(), coll = {}, pendingIdx = [];
@@ -766,14 +839,17 @@ function collectSets() {
     s.pages.push({ page: it.page, w: it.w, h: it.h, src: it.src, thumb: it.thumb });
   }
   const addFile = (path, size, mt, isNew) => {
-    if (known.has(path) || /(^|\/)~\$/.test(path) || path.startsWith("_BOARD/")) return;
-    const e = ((path.match(/\.(\w+)$/) || [])[1] || "").toLowerCase();
-    if (!/^(pdf|xlsx|xlsm|xls)$/.test(e)) return;
+    if (known.has(path) || /(^|\/)~\$/.test(path) || path.startsWith("_BOARD/") || /(^|\/)(desktop\.ini|thumbs\.db|\.ds_store)$/i.test(path)) return;
+    const e = ((path.match(/\.(\w+)$/) || [])[1] || "").toLowerCase(), inDrop = path.startsWith(DROP_DIR + "/");
+    // ngoài thư mục thả file chỉ lấy PDF/Excel; trong thư mục thả file lấy mọi loại (ảnh hiện như trang, còn lại là link)
+    const kind = e === "pdf" ? "pdf" : /^(xlsx|xlsm|xls)$/.test(e) ? "xlsx" : !inDrop ? null : IMG_RE.test(e) ? "img" : "links";
+    if (!kind) return;
     known.add(path);
-    const kind = e === "pdf" ? "pdf" : "xlsx", id = "x" + hashStr(path), name = path.split("/").pop();
+    const id = "x" + hashStr(path), name = path.split("/").pop();
+    if (kind === "links") { S.set(id, { id, title: name, path, kind, col: classify(path, kind), ord: ord++, size, mt, isNew, links: [{ path, name, ext: e || "?" }] }); return; }
     S.set(id, { id, title: name, path, kind, col: classify(path, kind), ord: ord++, size, mt, isNew });
     const m = docMeta[id] || cachedMeta(path, mt); if (m) docMeta[id] = m;
-    docsAll[id] = { name, path, pages: m ? m.n : (sheetCache[id] ? sheetCache[id].sheets.length : 0), kind, group: "", dupes: [], scanned: false };
+    docsAll[id] = { name, path, pages: kind === "img" ? 1 : m ? m.n : (sheetCache[id] ? sheetCache[id].sheets.length : 0), kind, group: "", dupes: [], scanned: false };
   };
   const att = {};
   for (const it of baseBoard.items) {
@@ -809,6 +885,7 @@ function rawItems(s, iw) {
   if (s.kind === "links") return s.links.map((l) => ({ type: "link", path: l.path, name: l.name, ext: l.ext, w: 230, h: 46 }));
   if (s.pre) return s.pages.map((p) => { const [w, h] = fit(p.w, p.h); return { type: "page", kind: "img", page: p.page, w, h, src: p.src, thumb: p.thumb }; });
   if (loadErr[s.id]) return null;
+  if (s.kind === "img") { const m = docMeta[s.id]; if (!m) return null; const [w, h] = fit(m.sz[0][0], m.sz[0][1]); return [{ type: "page", kind: "img", page: 1, w, h, src: s.path, thumb: s.path }]; }
   if (s.kind === "pdf") { const m = docMeta[s.id]; if (!m) return null; return m.sz.map((wh, i) => { const [w, h] = fit(wh[0], wh[1]); return { type: "page", kind: "pdf", page: i + 1, w, h }; }); }
   const c = sheetCache[s.id]; if (!c) return null;
   return c.sheets.map((sh, i) => { const k = Math.min(K.tableK, iw / sh.pw); return { type: "page", kind: "sheet", page: i + 1, name: sh.name, w: r1(sh.pw * k), h: r1(sh.ph * k), k, sh }; });
@@ -861,7 +938,8 @@ function scheduleRebuild() {
 }
 function infoText(st) {
   const s = st.s; let t;
-  if (s.kind === "links") t = s.links.length + " tệp";
+  if (s.kind === "links") t = s.path ? (s.links[0].ext || "").toUpperCase() + " · link" : s.links.length + " tệp";
+  else if (s.kind === "img") t = "ảnh";
   else if (s.kind === "xlsx") t = sheetCache[s.id] ? sheetCache[s.id].sheets.length + " sheet" : "Excel";
   else t = (docsAll[s.id] && docsAll[s.id].pages ? docsAll[s.id].pages + " trang" : "PDF");
   if (s.size && !s.pre) t += " · " + (s.size / 1048576).toFixed(1) + " MB";
@@ -897,7 +975,7 @@ function build() {
     if (st.s.path) bs.appendChild(B(null, "📂", "Mở file gốc trên Drive", () => openPath(st.s.path)));
     bs.appendChild(B("eo danger", "✕", "Gỡ bộ này khỏi bảng (khôi phục được)", () => removeSet(st.id)));
     h.appendChild(bs); d.appendChild(h);
-    if (!st.collapsed && st.state !== "ok") d.appendChild(el("div", "ph", st.state === "err" ? "⚠ Không đọc được file: " + loadErr[st.id] : "Đang tải " + (st.s.kind === "xlsx" ? "Excel" : "PDF") + "…"));
+    if (!st.collapsed && st.state !== "ok") d.appendChild(el("div", "ph", st.state === "err" ? "⚠ Không đọc được file: " + loadErr[st.id] : "Đang tải " + (st.s.kind === "xlsx" ? "Excel" : st.s.kind === "img" ? "ảnh" : "PDF") + "…"));
     world.appendChild(d); setEls.set(st.id, { st, el: d });
   }
   for (const it of board.items) {
@@ -955,11 +1033,18 @@ async function revealPage(doc, page) {
 function ensureLoaded(s) {
   if (loadP.has(s.id)) return loadP.get(s.id);
   const p = (async () => {
-    try { if (s.kind === "xlsx") await loadSheets(s); else await loadPdfMeta(s); }
+    try { if (s.kind === "xlsx") await loadSheets(s); else if (s.kind === "img") await loadImgMeta(s); else await loadPdfMeta(s); }
     catch (e) { loadErr[s.id] = e.message || String(e); console.warn(e); }
     scheduleRebuild();
   })();
   loadP.set(s.id, p); return p;
+}
+async function loadImgMeta(s) {
+  const u = cache.get(s.path) || await src.blobUrl(s.path); cache.set(s.path, u);
+  const im = new Image(); im.src = u; await im.decode();
+  const k = 297 / Math.max(im.naturalWidth, im.naturalHeight);
+  docMeta[s.id] = { n: 1, sz: [[r1(im.naturalWidth * k), r1(im.naturalHeight * k)]] };
+  try { localStorage.setItem("pb_pm:" + s.path + "|" + (s.mt || ""), JSON.stringify(docMeta[s.id])); } catch (e) {}
 }
 async function loadPdfMeta(s) {
   const pdf = await getPdf(s.id), n = Math.min(pdf.numPages, 300), sz = [];
