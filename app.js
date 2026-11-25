@@ -610,7 +610,7 @@ function renderWbs() {
   for (const z of wbs.zones) {
     const zh = el("div", "wz", z.title); zh.title = z.note || ""; box.appendChild(zh);
     for (const p of z.packages) {
-      const ph = el("div", "wp", p.title); ph.appendChild(el("small", null, (p.area_m2 ? p.area_m2 + " m² · " : "") + p.items.length + " dòng BOQ")); box.appendChild(ph);
+      const ph = el("div", "wp", p.title); ph.appendChild(el("small", null, (p.area_m2 ? p.area_m2 + " m² · " : "") + (p.items.length ? p.items.length + " hạng mục" : "chưa có hạng mục – điền dần"))); box.appendChild(ph);
       let lastCat = null;
       const byCat = {}; for (const it of p.items) (byCat[it.cat] = byCat[it.cat] || []).push(it);
       for (const [cat, its] of Object.entries(byCat)) {
@@ -641,10 +641,21 @@ function renderWbs() {
     }
   }
 }
-async function goPage(doc, page) {
+async function goPage(doc, page, boxes) {
   const pe = await revealPage(doc, page); if (!pe) return status("Không thấy trang này trên bảng", 3000);
-  clearHl(); pe.el.classList.add("focus"); hlEls.push(pe.el); focusRect(pe.it, 0.04);
+  clearHl(); pe.el.classList.add("focus"); hlEls.push(pe.el);
+  if (!boxes || !boxes.length) return focusRect(pe.it, 0.04);
+  // khoanh vị trí hạng mục trên trang (toạ độ 0–1 theo trang) rồi phóng tới vùng đó
+  let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
+  for (const b of boxes) {
+    const h = el("div", "hl pin"); Object.assign(h.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
+    pe.el.appendChild(h); hlEls.push(h);
+    x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
+  }
+  const it = pe.it, mw = Math.max(x1 - x0, 0.12), mh = Math.max(y1 - y0, 0.08), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  focusRect({ x: it.x + (cx - mw / 2) * it.w, y: it.y + (cy - mh / 2) * it.h, w: mw * it.w, h: mh * it.h }, 0.15);
 }
+function boxesOf(it, ref) { if (!ref) return null; if (ref.boxes) return ref.boxes; const d = it.drawings.find((x) => x.doc === ref.doc && x.page === ref.page); return d ? d.boxes : null; }
 function openWbsItem(id, noFocus) {
   const f = allWbsItems().find((x) => x.it.id === id); if (!f) return; const { z, p, it } = f; wbsCur = id;
   $("#results").classList.add("hidden"); $("#wbsd").classList.remove("hidden");
@@ -677,7 +688,7 @@ function openWbsItem(id, noFocus) {
   for (const s of it.specs) B.appendChild(linkRow("s:" + s.code, s.code + " · " + s.desc, s.loc + " · " + s.product + " · NCC: " + s.supplier, () => goPage(s.doc, s.page), s.conf === "cao" ? "Gợi ý: khớp tên" : "Gợi ý: tham khảo, cần xác nhận", { doc: s.doc, page: s.page }));
   B.appendChild(el("h4", null, "Bản vẽ (" + it.drawings.length + ")"));
   if (!it.drawings.length) B.appendChild(el("div", "wbox warn", "Chưa có bản vẽ DD cho dòng này."));
-  for (const d of it.drawings) B.appendChild(linkRow("d:" + d.page, d.label, "Trang " + d.page + " – DD 1st Submission", () => goPage(d.doc, d.page), null, { doc: d.doc, page: d.page }));
+  for (const d of it.drawings) B.appendChild(linkRow("d:" + (d.doc === "d4407d2f69" ? "" : d.doc + ":") + d.page, d.label, d.sub || "Trang " + d.page + " – DD 1st Submission", () => goPage(d.doc, d.page, d.boxes), null, { doc: d.doc, page: d.page }));
   { // trang người dùng tự gắn từ bảng
     const ex = [];
     for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.extra) for (const x of r.extra) ex.push({ x, owner, d, mine: !!me && owner === me.email }); }
@@ -717,7 +728,7 @@ function openWbsItem(id, noFocus) {
   const peers = wbsPeers(id); if (peers.length) B.appendChild(el("div", "who", "Đã duyệt bởi: " + peers.join(", ")));
   for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
   // đưa bản vẽ chính lên màn hình
-  const first = mainOf(id) || it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page);
+  const first = mainOf(id) || it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page, boxesOf(it, first));
   renderSelBar();
 }
 
@@ -1505,7 +1516,7 @@ function mainBox(id, it) {
   w.appendChild(el("h4", null, "Bản vẽ minh họa"));
   const row = el("div", "mrw");
   if (cur) {
-    const dd = board.docs[cur.doc], tx = el("div", "mtx"); tx.append(el("b", null, (dd ? dd.name : cur.doc) + " · tr." + cur.page), el("small", null, m ? "Do bạn/nhóm chọn" : "Mặc định (gợi ý tự động)")); tx.style.cursor = "pointer"; tx.onclick = () => goPage(cur.doc, cur.page); row.appendChild(tx);
+    const dd = board.docs[cur.doc], tx = el("div", "mtx"); tx.append(el("b", null, (dd ? dd.name : cur.doc) + " · tr." + cur.page), el("small", null, m ? "Do bạn/nhóm chọn" : "Mặc định (gợi ý tự động)")); tx.style.cursor = "pointer"; tx.onclick = () => goPage(cur.doc, cur.page, boxesOf(it, cur)); row.appendChild(tx);
   } else row.appendChild(el("div", "wbox", "Chưa có bản vẽ minh họa."));
   w.appendChild(row);
   const bar = el("div", "wnb");
