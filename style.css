@@ -24,7 +24,7 @@ button.on{background:#1e293b;color:#fff;border-color:#1e293b}
 .pg img{width:100%;height:100%;display:block;user-select:none;-webkit-user-drag:none}
 .pg .pn{position:absolute;right:0;bottom:0;background:rgba(15,23,42,.7);color:#fff;font-size:9px;padding:1px 4px}
 .hl{position:absolute;background:rgba(250,204,21,.45);outline:1px solid #eab308;pointer-events:none}
-.hl.pin{background:rgba(239,68,68,.12);outline:none;border:2px solid #ef4444;border-radius:50%;box-shadow:0 0 0 3px rgba(239,68,68,.25);animation:pinp 1.2s ease-in-out 3}
+.hl.loc{background:rgba(239,68,68,.12);outline:none;border:2px solid #ef4444;border-radius:50%;box-shadow:0 0 0 3px rgba(239,68,68,.25);animation:pinp 1.2s ease-in-out 3}
 @keyframes pinp{50%{box-shadow:0 0 0 9px rgba(239,68,68,0)}}
 .lnk{position:absolute;display:flex;align-items:center;gap:8px;padding:0 10px;background:#fff;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;cursor:pointer;overflow:hidden}
 .lnk:hover{border-color:#2563eb;background:#eff6ff}
@@ -239,3 +239,18 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 .wthumbs{grid-template-columns:repeat(auto-fill,minmax(120px,1fr))}
 
 .grp.drop{outline:calc(6px * var(--inv)) dashed #2563eb;outline-offset:calc(4px * var(--inv));background:#eff6ff}
+
+/* 2 cửa sổ hình của hạng mục WBS */
+#wbsPics{position:fixed;top:56px;right:8px;bottom:8px;width:min(560px,36vw);z-index:15;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#wbsPics .pw{flex:1;min-height:0;display:flex;flex-direction:column;background:#fff;border:1px solid #cbd5e1;border-radius:10px;box-shadow:0 8px 30px rgba(15,23,42,.18);overflow:hidden;pointer-events:auto}
+#wbsPics .pwh{display:flex;align-items:center;gap:4px;padding:4px 6px 4px 10px;border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:600;color:#334155}
+#wbsPics .pwt{flex:1}
+#wbsPics .pwh button{border:1px solid #e2e8f0;background:#fff;border-radius:6px;padding:1px 7px;cursor:pointer}
+#wbsPics .pwh button:disabled{opacity:.35}
+#wbsPics .pwb{flex:1;position:relative;overflow:hidden;background:#f1f5f9;cursor:grab;touch-action:none}
+#wbsPics .pwi{position:absolute;left:0;top:0;transform-origin:0 0}
+#wbsPics .pwimg{display:block;width:100%;height:100%}
+#wbsPics .pwload{padding:20px;color:#64748b;font-size:13px;white-space:nowrap}
+#wbsPics .hl.loc{border-width:calc(3px * var(--inv))}
+.wbsInfoBtn{margin-left:auto;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font:600 12px monospace;cursor:pointer}
+.wbsInfoBtn.on{background:#0f172a;color:#fff;border-color:#0f172a}

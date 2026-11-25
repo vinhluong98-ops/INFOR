@@ -379,7 +379,8 @@ function focusRect(r, pad = 0.05, anim = true) {
   const W = vp.clientWidth, H = vp.clientHeight;
   // chừa chỗ cho thanh danh mục / kết quả tìm kiếm đang mở
   const L = $("#side").classList.contains("hidden") ? 0 : $("#side").offsetWidth;
-  const R = Math.max($("#results").classList.contains("hidden") ? 0 : $("#results").offsetWidth, $("#wbsd").classList.contains("hidden") ? 0 : $("#wbsd").offsetWidth);
+  const pics = $("#wbsPics"), PW = pics && !pics.classList.contains("hidden") ? pics.offsetWidth + 8 : 0;
+  const R = Math.max($("#results").classList.contains("hidden") ? 0 : $("#results").offsetWidth, ($("#wbsd").classList.contains("hidden") ? 0 : $("#wbsd").offsetWidth) + PW);
   const AW = Math.max(200, W - L - R), CX = L + AW / 2;
   const s = Math.min(AW / (r.w * (1 + 2 * pad)), H / (r.h * (1 + 2 * pad)));
   const tgt = { s, x: CX - (r.x + r.w / 2) * s, y: H / 2 - (r.y + r.h / 2) * s };
@@ -670,14 +671,16 @@ $("#btnWbs").onclick = () => {
   const open = !$("#side").classList.contains("hidden") && !$("#wbsList").classList.contains("hidden");
   if (open) { $("#side").classList.add("hidden"); closeWbsd(); } else { $("#side").classList.remove("hidden"); setSideTab("wbs"); }
 };
-$("#wbsdClose").onclick = closeWbsd;
-function closeWbsd() { $("#wbsd").classList.add("hidden"); wbsCur = null; if (typeof renderSelBar === "function") renderSelBar(); document.querySelectorAll(".wi.cur").forEach((e) => e.classList.remove("cur")); clearHl(); }
+$("#wbsdClose").onclick = () => setWbsInfo(false);
+function closeWbsd() { $("#wbsd").classList.add("hidden"); $("#wbsPics").classList.add("hidden"); wbsCur = null; if (typeof renderSelBar === "function") renderSelBar(); document.querySelectorAll(".wi.cur").forEach((e) => e.classList.remove("cur")); clearHl(); }
 function renderWbs() {
   const box = $("#wbsList"); box.innerHTML = "";
   const f = el("div"); f.id = "wbsFilter";
   const q = el("input"); q.type = "search"; q.placeholder = "Lọc hạng mục…"; q.value = wbsQ; q.oninput = () => { wbsQ = q.value; renderWbs(); const i2 = box.querySelector("input"); i2.focus(); i2.setSelectionRange(wbsQ.length, wbsQ.length); };
   const lb = el("label"); const cb = el("input"); cb.type = "checkbox"; cb.checked = wbsOnlyWarn; cb.onchange = () => { wbsOnlyWarn = cb.checked; renderWbs(); };
-  lb.append(cb, document.createTextNode(" Chỉ có cảnh báo")); f.append(q, lb); box.appendChild(f);
+  lb.append(cb, document.createTextNode(" Chỉ có cảnh báo"));
+  const ib = el("button", "wbsInfoBtn" + (wbsInfoOn ? " on" : ""), "<>"); ib.title = "Ẩn / hiện bảng thông tin hạng mục"; ib.onclick = () => setWbsInfo(!wbsInfoOn);
+  f.append(q, lb, ib); box.appendChild(f);
   const nq = norm(wbsQ);
   for (const z of wbs.zones) {
     const zh = el("div", "wz", z.title); zh.title = z.note || ""; box.appendChild(zh);
@@ -720,7 +723,7 @@ async function goPage(doc, page, boxes) {
   // khoanh vị trí hạng mục trên trang (toạ độ 0–1 theo trang) rồi phóng tới vùng đó
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
   for (const b of boxes) {
-    const h = el("div", "hl pin"); Object.assign(h.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
+    const h = el("div", "hl loc"); Object.assign(h.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
     pe.el.appendChild(h); hlEls.push(h);
     x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
   }
@@ -730,7 +733,7 @@ async function goPage(doc, page, boxes) {
 function boxesOf(it, ref) { if (!ref) return null; if (ref.boxes) return ref.boxes; const d = it.drawings.find((x) => x.doc === ref.doc && x.page === ref.page); return d ? d.boxes : null; }
 function openWbsItem(id, noFocus) {
   const f = allWbsItems().find((x) => x.it.id === id); if (!f) return; const { z, p, it } = f; wbsCur = id;
-  $("#results").classList.add("hidden"); $("#wbsd").classList.remove("hidden");
+  $("#results").classList.add("hidden"); $("#wbsd").classList.toggle("hidden", !wbsInfoOn);
   document.querySelectorAll(".wi").forEach((e) => e.classList.toggle("cur", e.dataset.id === id));
   const st = me ? wbsState(id) : { chk: {}, links: {}, note: "" };
   const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
@@ -800,8 +803,71 @@ function openWbsItem(id, noFocus) {
   const peers = wbsPeers(id); if (peers.length) B.appendChild(el("div", "who", "Đã duyệt bởi: " + peers.join(", ")));
   for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.note && !(me && owner === me.email)) B.appendChild(el("div", "wbox", (d.author || owner) + ": " + r.note)); }
   // đưa bản vẽ chính lên màn hình
-  const first = mainOf(id) || it.drawings[0] || it.specs[0]; if (first && !noFocus) goPage(first.doc, first.page, boxesOf(it, first));
+  const first = mainOf(id) || it.drawings[0] || it.specs[0];
+  if (!noFocus) { showPics(it); if (first) goPage(first.doc, first.page, boxesOf(it, first)); }
   renderSelBar();
+}
+/* ----- nút <> ẩn/hiện bảng thông tin hạng mục ----- */
+let wbsInfoOn = false; try { wbsInfoOn = localStorage.getItem("pb_wbsinfo") === "1"; } catch (e) {}
+function setWbsInfo(on) {
+  wbsInfoOn = on; try { localStorage.setItem("pb_wbsinfo", on ? "1" : "0"); } catch (e) {}
+  if (on && wbsCur) openWbsItem(wbsCur, true); else $("#wbsd").classList.add("hidden");
+  document.querySelectorAll(".wbsInfoBtn").forEach((b) => b.classList.toggle("on", on)); placePics();
+}
+/* ----- 2 cửa sổ hình: layout + phối cảnh, khoanh vị trí hạng mục ----- */
+const isPersp = (d) => /phối cảnh|thực tế|perspective/i.test(d.label || "") || /phối cảnh/i.test(d.sub || "");
+let picSeq = 0;
+function showPics(it) {
+  const box = $("#wbsPics"); const seq = ++picSeq;
+  const dr = it.drawings || []; let lay = dr.filter((d) => !isPersp(d)), per = dr.filter(isPersp);
+  if (!per.length && lay.length > 1) { per = lay.slice(1); lay = lay.slice(0, 1); }
+  const wins = [["Layout", lay], ["Phối cảnh", per]].filter((w) => w[1].length);
+  box.innerHTML = ""; box.classList.toggle("hidden", !wins.length);
+  for (const [title, list] of wins) box.appendChild(picWin(title, list, seq));
+  placePics();
+}
+function placePics() { const b = $("#wbsPics"); if (b) b.style.right = ($("#wbsd").classList.contains("hidden") ? 0 : $("#wbsd").offsetWidth) + 8 + "px"; }
+function picWin(title, list, seq) {
+  const w = el("div", "pw"), h = el("div", "pwh"), body = el("div", "pwb"), inner = el("div", "pwi");
+  let k = 0, v = { x: 0, y: 0, s: 1 }, natW = 1, natH = 1;
+  const t = el("span", "pwt"), prev = el("button", null, "◀"), next = el("button", null, "▶"), go = el("button", null, "⤢"), cl = el("button", null, "✕");
+  prev.title = "Hình trước"; next.title = "Hình sau"; go.title = "Mở trang này trên bảng"; cl.title = "Đóng cửa sổ";
+  h.append(t, prev, next, go, cl); body.appendChild(inner); w.append(h, body);
+  const fitTo = (bx) => { // phóng tới vùng khoanh (hoặc cả trang)
+    const W = body.clientWidth || 400, H = body.clientHeight || 260;
+    let x0 = 0, y0 = 0, x1 = 1, y1 = 1;
+    if (bx && bx.length) { x0 = Math.min(...bx.map((b) => b[0])); y0 = Math.min(...bx.map((b) => b[1])); x1 = Math.max(...bx.map((b) => b[2])); y1 = Math.max(...bx.map((b) => b[3])); }
+    let rw = Math.max((x1 - x0) * natW, natW * 0.22), rh = Math.max((y1 - y0) * natH, natH * 0.16); rw *= 1.5; rh *= 1.5;
+    v.s = Math.min(W / rw, H / rh); v.x = W / 2 - ((x0 + x1) / 2) * natW * v.s; v.y = H / 2 - ((y0 + y1) / 2) * natH * v.s; ap();
+  };
+  const ap = () => { inner.style.transform = `translate(${v.x}px,${v.y}px) scale(${v.s})`; inner.style.setProperty("--inv", (1 / v.s).toFixed(4)); };
+  const load = async () => {
+    const d = list[k]; t.textContent = title + (list.length > 1 ? ` ${k + 1}/${list.length}` : "") + " · tr." + d.page;
+    prev.disabled = k === 0; next.disabled = k === list.length - 1; prev.style.display = next.style.display = list.length > 1 ? "" : "none";
+    inner.innerHTML = ""; inner.appendChild(el("div", "pwload", "Đang tải hình…"));
+    try {
+      const doc = board.docs[d.doc]; let node;
+      if (doc && doc.kind === "img") { const im = new Image(); im.src = cache.get(doc.path) || await src.blobUrl(doc.path); await im.decode(); node = im; natW = im.naturalWidth; natH = im.naturalHeight; }
+      else {
+        const pdf = await getPdf(d.doc), pg = await pdf.getPage(d.page), v0 = pg.getViewport({ scale: 1 });
+        const sc = Math.min(4, 3000 / Math.max(v0.width, v0.height)), vp2 = pg.getViewport({ scale: sc });
+        const cv = document.createElement("canvas"); cv.width = Math.floor(vp2.width); cv.height = Math.floor(vp2.height);
+        const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        await pg.render({ canvasContext: ctx, viewport: vp2 }).promise; node = cv; natW = cv.width; natH = cv.height;
+      }
+      if (seq !== picSeq) return;
+      inner.innerHTML = ""; node.className = "pwimg"; inner.style.width = natW + "px"; inner.style.height = natH + "px"; inner.appendChild(node);
+      for (const b of d.boxes || []) { const c = el("div", "hl loc"); Object.assign(c.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" }); inner.appendChild(c); }
+      fitTo(d.boxes);
+    } catch (e) { inner.innerHTML = ""; inner.appendChild(el("div", "pwload", "Không tải được hình: " + (e.message || e))); }
+  };
+  prev.onclick = () => { if (k > 0) { k--; load(); } }; next.onclick = () => { if (k < list.length - 1) { k++; load(); } };
+  go.onclick = () => { const d = list[k]; goPage(d.doc, d.page, d.boxes); };
+  cl.onclick = () => { w.remove(); if (!$("#wbsPics").children.length) $("#wbsPics").classList.add("hidden"); };
+  body.addEventListener("wheel", (e) => { e.preventDefault(); const r = body.getBoundingClientRect(), cx = e.clientX - r.left, cy = e.clientY - r.top, ns = Math.min(8, Math.max(0.02, v.s * Math.exp(-e.deltaY * 0.0015))); v.x = cx - (cx - v.x) * (ns / v.s); v.y = cy - (cy - v.y) * (ns / v.s); v.s = ns; ap(); }, { passive: false });
+  body.addEventListener("pointerdown", (e) => { const sx = e.clientX - v.x, sy = e.clientY - v.y; body.setPointerCapture(e.pointerId); const mv = (ev) => { v.x = ev.clientX - sx; v.y = ev.clientY - sy; ap(); }; const up = () => { body.removeEventListener("pointermove", mv); body.removeEventListener("pointerup", up); }; body.addEventListener("pointermove", mv); body.addEventListener("pointerup", up); });
+  body.addEventListener("dblclick", () => fitTo(list[k].boxes));
+  setTimeout(load, 0); return w;
 }
 
 /* ================= BỐ CỤC 4 CỘT: BOQ · BẢN VẼ · SPEC · CÁC HS KHÁC ================= */
