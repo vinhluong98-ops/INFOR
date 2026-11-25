@@ -254,3 +254,12 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 #wbsPics .hl.loc{border-width:calc(3px * var(--inv))}
 .wbsInfoBtn{margin-left:auto;border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font:600 12px monospace;cursor:pointer}
 .wbsInfoBtn.on{background:#0f172a;color:#fff;border-color:#0f172a}
+#wbsPics .pwh button.on{background:#2563eb;color:#fff;border-color:#2563eb}
+#wbsPics .pwb.editing{cursor:crosshair}
+#wbsPics .pwload.wrap{white-space:normal;max-width:360px}
+#wbsPics .rsel{position:absolute;border:calc(2px * var(--inv)) dashed #2563eb;background:rgba(37,99,235,.12);pointer-events:none}
+.hl.loc.own{border-radius:12%;border-color:#2563eb;background:rgba(37,99,235,.10);box-shadow:0 0 0 3px rgba(37,99,235,.25)}
+#wbsBoardBar{position:fixed;top:56px;left:10px;z-index:15;display:flex;gap:4px;align-items:center;background:#fff;border:1px solid #cbd5e1;border-radius:10px;padding:4px 6px 4px 10px;box-shadow:0 6px 20px rgba(15,23,42,.15);font-size:12px}
+#wbsBoardBar b{margin-right:4px;color:#334155}
+#wbsBoardBar button{border:1px solid #e2e8f0;background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer;font-size:12px}
+#wbsBoardBar button:disabled{opacity:.35}
