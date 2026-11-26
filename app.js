@@ -923,7 +923,15 @@ function pickSlot(it, slot) {
 }
 const viewItem = (v) => ({ doc: v.doc, page: v.page, boxes: [v.box], crop: true });
 function showPics(it, keepBoard) {
-  const seq = ++picSeq, dr = it.drawings || [], per = dr.filter(isPersp), lay = dr.filter((d) => !isPersp(d));
+  const seq = ++picSeq, dr = it.drawings || [], lay = dr.filter((d) => !isPersp(d));
+  let per = dr.filter(isPersp);
+  // hạng mục chưa có trên phối cảnh nào: bảng lớn vẫn hiện các trang phối cảnh của cùng khu để tìm và thêm số note (＋ Khoanh)
+  if (!per.length) {
+    const f = allWbsItems().find((x) => x.it.id === it.id), seen = new Set();
+    if (f) for (const o of f.p.items) for (const d of o.drawings || []) if (isPersp(d) && !seen.has(rgKey(d.doc, d.page))) { seen.add(rgKey(d.doc, d.page)); per.push({ doc: d.doc, page: d.page, label: d.label, sub: d.sub, mk: "tag", boxes: regionOf(it.id, d.doc, d.page) || [] }); }
+    per.sort((a, b) => a.page - b.page);
+    if (per.length && !keepBoard && !per.some((d) => d.boxes.length)) status("“" + dName(it) + "” chưa có số note trên phối cảnh – lật ◀ ▶ tìm hình, rồi bấm “＋ Khoanh” để đặt số", 7000);
+  }
   bdIt = it; bdK = 0;
   bdList = per.length ? per.slice() : dr.length ? dr.slice() : it.specs.map((s) => ({ doc: s.doc, page: s.page }));
   const m = mainOf(it.id); if (m) { const i = bdList.findIndex((d) => d.doc === m.doc && d.page === m.page); if (i > 0) bdK = i; else if (i < 0) bdList.unshift({ doc: m.doc, page: m.page }); }
