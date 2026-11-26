@@ -1068,7 +1068,7 @@ const docMeta = {}, sheetCache = {}, loadP = new Map(), loadErr = {}, setEls = n
 function classify(path, kind) {
   const p = norm(path);
   if (/boq|bao gia|du toan|budget|khoi luong|ngan sach/.test(p)) return "BOQ";
-  if (kind === "xlsx") return /tien do|schedule|nhan su|danh sach/.test(p) ? "OTH" : "BOQ";
+  if (kind === "xlsx") return /tien do|schedule|nhan su|danh sach|tracking|theo doi/.test(p) ? "OTH" : "BOQ";
   if (/spec|material|finish|furniture|vat lieu|ff&e|catalog/.test(p)) return "SPEC";
   if (/dwg|drawing|ban ve|\bdd\b|\bsd\b|tkkt|layout|shop ?drawing|mat bang|\b3d\b/.test(p)) return "DWG";
   return "OTH";
@@ -1305,14 +1305,31 @@ function loadXlsxLib() {
 }
 function sheetRender(ws, name) {
   const ref = ws["!ref"]; if (!ref) return null;
-  const r = XLSX.utils.decode_range(ref), R = Math.min(r.e.r, r.s.r + 599), C = Math.min(r.e.c, r.s.c + 39);
+  const r = XLSX.utils.decode_range(ref);
+  // vùng dữ liệu thật: nhiều file (VBA, mẫu) có !ref kéo tới hàng chục nghìn dòng trống chỉ vì định dạng ô
+  let lr = -1, lc = -1;
+  for (const k in ws) { if (k[0] === "!") continue; const c = ws[k]; if (!c || c.v === undefined || c.v === null || c.v === "") continue; const a = XLSX.utils.decode_cell(k); if (a.r > lr) lr = a.r; if (a.c > lc) lc = a.c; }
+  for (const m of ws["!merges"] || []) { if (m.s.r <= lr && m.e.r > lr) lr = m.e.r; if (m.s.c <= lc && m.e.c > lc) lc = m.e.c; }
+  if (lr < r.s.r || lc < r.s.c) return null; // sheet trống
+  r.e.r = Math.min(r.e.r, lr); r.e.c = Math.min(r.e.c, lc);
+  const C = Math.min(r.e.c, r.s.c + 39);
+  // bỏ các dòng trống trong vùng hiển thị (sheet tiến độ/Gantt có rất nhiều dòng trống ở các cột đầu); bảng chỉ xem trước 80 dòng có dữ liệu
+  const inMerge = new Set(); for (const m of ws["!merges"] || []) if (m.e.r > m.s.r) for (let y = m.s.r; y <= m.e.r; y++) inMerge.add(y);
+  const keep = new Set(); let R = r.s.r, nData = 0;
+  for (let y = r.s.r; y <= r.e.r; y++) {
+    let has = inMerge.has(y);
+    if (!has) for (let x = r.s.c; x <= C; x++) { const c = ws[XLSX.utils.encode_cell({ r: y, c: x })]; if (c && c.v !== undefined && c.v !== null && c.v !== "") { has = true; break; } }
+    if (has) { nData++; if (keep.size < 80) { keep.add(y); R = y; } }
+  }
+  if (!keep.size) return null;
   ws["!ref"] = XLSX.utils.encode_range({ s: r.s, e: { r: R, c: C } });
   let html = XLSX.utils.sheet_to_html(ws, { header: "", footer: "" });
+  { let y = r.s.r - 1; html = html.replace(/<tr[\s\S]*?<\/tr>/g, (m) => (keep.has(++y) ? m : "")); }
   const text = XLSX.utils.sheet_to_csv(ws, { FS: " ", blankrows: false });
   ws["!ref"] = ref;
   const cols = ws["!cols"] || []; let cg = "<colgroup>", tw = 0;
   for (let c = r.s.c; c <= C; c++) { const o = cols[c] || {}; let w = o.hidden ? 2 : (o.wpx || (o.wch ? Math.round(o.wch * 7 + 5) : (o.width ? Math.round(o.width * 7) : 64))); w = Math.max(2, Math.min(w, 600)); cg += `<col style="width:${w}px">`; tw += w; }
-  const more = (r.e.r > R ? ` · hiện ${R - r.s.r + 1}/${r.e.r - r.s.r + 1} dòng` : "") + (r.e.c > C ? ` · ${C - r.s.c + 1}/${r.e.c - r.s.c + 1} cột` : "");
+  const more = (nData > keep.size ? ` · xem trước ${keep.size}/${nData} dòng – mở File gốc để xem đủ` : "") + (r.e.c > C ? ` · ${C - r.s.c + 1}/${r.e.c - r.s.c + 1} cột` : "");
   html = html.replace(/ id="sjs-[^"]*"/g, "").replace(/ data-v="[^"]*"/g, "").replace(/^[\s\S]*?<table[^>]*>/, `<table class="xt" style="width:${tw}px"><caption>${esc(name)}<small>${more}</small></caption>${cg}</colgroup>`);
   return { html, text };
 }
