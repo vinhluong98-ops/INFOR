@@ -273,3 +273,18 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 .wi .q + .iedw,.wi .iedw:last-child{flex:0 0 110px}
 .wi input.ied{flex:1;min-width:0;font:inherit;padding:1px 5px;border:1px solid #2563eb;border-radius:5px;outline:none}
 .wi .iedr{border:1px solid #cbd5e1;background:#fff;border-radius:5px;font-size:11px;padding:0 5px;cursor:pointer}
+
+/* ký hiệu hạng mục WBS trên bảng */
+.wmk{position:absolute;pointer-events:none;z-index:3}
+.wmk.circ{border:calc(2px * var(--inv, 1)) solid #ef4444;border-radius:50%;box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+.wmk.circ .wml{position:absolute;right:-10%;top:-30%;color:#ef4444;font-weight:800;display:none}
+.wmk.tag{display:flex;align-items:center;justify-content:center}
+.wmk.tag .wml{color:#e11d24;font-weight:900;font-family:Arial,sans-serif;line-height:1;-webkit-text-stroke:.06em #fff;paint-order:stroke fill;text-shadow:0 0 .08em #fff}
+.wmk.cur.circ{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.35)}
+.wmk.cur.tag{outline:2px dashed #2563eb;outline-offset:2px}
+.mkedit .wmk{pointer-events:auto;cursor:move}
+.mkedit .wmk.tag{outline:1px dashed rgba(225,29,36,.7)}
+.mkedit .wmk.circ .wml{display:block}
+.wmk .wmh,.wmk .wmx{display:none}
+.mkedit .wmk .wmh{display:block;position:absolute;right:calc(-4px * var(--inv));bottom:calc(-4px * var(--inv));width:calc(9px * var(--inv));height:calc(9px * var(--inv));background:#fff;border:calc(2px * var(--inv)) solid #2563eb;border-radius:2px;cursor:nwse-resize}
+.mkedit .wmk .wmx{display:block;position:absolute;right:calc(-6px * var(--inv));top:calc(-8px * var(--inv));font-size:calc(10px * var(--inv));line-height:calc(13px * var(--inv));width:calc(13px * var(--inv));height:calc(13px * var(--inv));text-align:center;background:#ef4444;color:#fff;border-radius:50%;cursor:pointer}

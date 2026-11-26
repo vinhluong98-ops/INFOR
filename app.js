@@ -678,9 +678,11 @@ function renderWbs() {
   const f = el("div"); f.id = "wbsFilter";
   const q = el("input"); q.type = "search"; q.placeholder = "Lọc hạng mục…"; q.value = wbsQ; q.oninput = () => { wbsQ = q.value; renderWbs(); const i2 = box.querySelector("input"); i2.focus(); i2.setSelectionRange(wbsQ.length, wbsQ.length); };
   const lb = el("label"); const cb = el("input"); cb.type = "checkbox"; cb.checked = wbsOnlyWarn; cb.onchange = () => { wbsOnlyWarn = cb.checked; renderWbs(); };
-  lb.append(cb, document.createTextNode(" Chỉ có cảnh báo"));
+  lb.append(cb, document.createTextNode(" Cảnh báo"));
   const ib = el("button", "wbsInfoBtn" + (wbsInfoOn ? " on" : ""), "<>"); ib.title = "Ẩn / hiện bảng thông tin hạng mục"; ib.onclick = () => setWbsInfo(!wbsInfoOn);
-  f.append(q, lb, ib); box.appendChild(f);
+  const mb = el("button", "wbsInfoBtn" + (mkOn ? " on" : ""), "🏷"); mb.title = "Hiện / ẩn ký hiệu hạng mục trên bảng"; mb.onclick = () => setMk(!mkOn, false);
+  const eb = el("button", "wbsInfoBtn" + (mkEdit ? " on" : ""), "✎"); eb.title = "Sửa ký hiệu trên bảng: kéo để di chuyển, kéo góc để đổi cỡ, ✕ để xoá"; eb.onclick = () => { if (!me) return status("Đăng nhập để sửa ký hiệu", 3000); setMk(true, !mkEdit); };
+  f.append(q, lb, mb, eb, ib); box.appendChild(f);
   const nq = norm(wbsQ).trim(), isCode = /^[a-z]{0,2}\d{1,3}[a-z]?$/.test(nq);
   // gõ ký hiệu (E2, 10…) thì khớp đúng ký hiệu; gõ chữ thì tìm trong tên, nhóm, mã code, mã SPEC
   const hit = (it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || (isCode ? norm(String(it.stt)) === nq || norm(codeOf(it.id)) === nq : norm(it.stt + " " + codeOf(it.id) + " " + dName(it) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
@@ -733,8 +735,7 @@ async function goPage(doc, page, boxes, wide) {
   // khoanh vị trí hạng mục trên trang (toạ độ 0–1 theo trang) rồi phóng tới vùng đó
   let x0 = 1, y0 = 1, x1 = 0, y1 = 0;
   for (const b of boxes) {
-    const h = el("div", "hl loc"); Object.assign(h.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
-    pe.el.appendChild(h); hlEls.push(h);
+    if (!mkOn) { const h = el("div", "hl loc"); Object.assign(h.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" }); pe.el.appendChild(h); hlEls.push(h); }
     x0 = Math.min(x0, b[0]); y0 = Math.min(y0, b[1]); x1 = Math.max(x1, b[2]); y1 = Math.max(y1, b[3]);
   }
   const it = pe.it, mw = Math.min(1, Math.max(x1 - x0, wide ? 0.6 : 0.12)), mh = Math.min(1, Math.max(y1 - y0, wide ? 0.34 : 0.08)), cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
@@ -745,6 +746,7 @@ function openWbsItem(id, noFocus) {
   const f = allWbsItems().find((x) => x.it.id === id); if (!f) return; const { z, p, it } = f; wbsCur = id;
   $("#results").classList.add("hidden"); $("#wbsd").classList.toggle("hidden", !wbsInfoOn);
   document.querySelectorAll(".wi").forEach((e) => e.classList.toggle("cur", e.dataset.id === id));
+  world.querySelectorAll(".wmk").forEach((e) => e.classList.toggle("cur", e.dataset.id === id));
   const st = me ? wbsState(id) : { chk: {}, links: {}, note: "" };
   const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
   const D0 = dv(it);
@@ -827,17 +829,68 @@ function setWbsInfo(on) {
 }
 /* ----- vùng khoanh do người dùng chọn lại (lưu theo hạng mục + trang, cả nhóm thấy) ----- */
 const rgKey = (doc, page) => doc + "#" + page;
-function regionOf(id, doc, page) {
-  const k = rgKey(doc, page), m = me && notes[me.email] && notes[me.email].wbs && notes[me.email].wbs[id];
-  if (m && m.rg && m.rg[k]) return m.rg[k];
-  for (const d of Object.values(notes)) { const r = d.wbs && d.wbs[id]; if (r && r.rg && r.rg[k]) return r.rg[k]; }
-  return null;
+function regionOf(id, doc, page) { // vùng khoanh do người dùng chỉnh (bản chỉnh mới nhất của nhóm); null = dùng mặc định
+  const k = rgKey(doc, page); let best = null, bt = "";
+  for (const [owner, d] of Object.entries(notes)) {
+    const r = d.wbs && d.wbs[id]; if (!r || !r.rg || r.rg[k] === undefined) continue;
+    const t = (r.rgts && r.rgts[k]) || ""; if (best === null || t > bt || (t === bt && me && owner === me.email)) { best = r.rg[k]; bt = t; }
+  }
+  return best === null || best === "auto" ? null : best;
 }
-function setRegion(id, doc, page, boxes) {
-  if (!me) { status("Cần đăng nhập để chọn vùng", 3000); return false; }
-  const st = wbsState(id); st.rg = st.rg || {}; const k = rgKey(doc, page);
-  if (boxes && boxes.length) st.rg[k] = boxes.map((b) => b.map((v) => Math.round(v * 1e4) / 1e4)); else delete st.rg[k];
+function setRegion(id, doc, page, boxes) { // boxes = null → trả về mặc định; [] → bỏ hết vùng khoanh trên trang này
+  if (!me) { status("Cần đăng nhập để chỉnh vùng khoanh", 3000); return false; }
+  const st = wbsState(id); st.rg = st.rg || {}; st.rgts = st.rgts || {}; const k = rgKey(doc, page);
+  st.rg[k] = boxes ? boxes.map((b) => b.map((v) => Math.round(v * 1e4) / 1e4)) : "auto"; st.rgts[k] = new Date().toISOString();
   touchSt(st); queueSave(); return true;
+}
+/* ----- lớp ký hiệu hạng mục trên bảng (khoanh trên layout, nhãn mã trên phối cảnh) – sửa được ----- */
+let mkOn = true, mkEdit = false; try { mkOn = localStorage.getItem("pb_mkon") !== "0"; } catch (e) {}
+function markIndex() {
+  const idx = new Map(), add = (k, o) => { if (!idx.has(k)) idx.set(k, { tag: false, items: new Map() }); const e = idx.get(k); if (o.tag) e.tag = true; if (o.it && !e.items.has(o.it.id)) e.items.set(o.it.id, o.it); };
+  for (const { it } of allWbsItems()) {
+    for (const d of it.drawings || []) if (d.boxes) add(rgKey(d.doc, d.page), { it, tag: d.mk === "tag" });
+    for (const nd of Object.values(notes)) { const r = nd.wbs && nd.wbs[it.id]; if (r && r.rg) for (const k of Object.keys(r.rg)) add(k, { it }); }
+  }
+  return idx;
+}
+function boxesOn(it, doc, page) { const own = regionOf(it.id, doc, page); if (own) return own; const d = (it.drawings || []).find((x) => x.doc === doc && x.page === page && x.boxes); return d ? d.boxes : []; }
+function renderWbsMarks() {
+  world.querySelectorAll(".wmk").forEach((e) => e.remove());
+  world.classList.toggle("mkedit", mkEdit && mkOn);
+  if (!wbs || !mkOn) return;
+  const idx = markIndex();
+  for (const pe of pageEls) {
+    const E = idx.get(rgKey(pe.it.doc, pe.it.page)); if (!E) continue;
+    for (const it of E.items.values()) boxesOn(it, pe.it.doc, pe.it.page).forEach((b, i) => pe.el.appendChild(markEl(it, pe, b, i, E.tag)));
+  }
+}
+function markEl(it, pe, b, i, tag) {
+  const m = el("div", "wmk " + (tag ? "tag" : "circ") + (wbsCur === it.id ? " cur" : "")); m.dataset.id = it.id;
+  Object.assign(m.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
+  const lb = el("span", "wml", String(it.stt)); if (tag) lb.style.fontSize = Math.max(6, pe.it.w * 0.032) + "px"; else lb.style.fontSize = Math.max(4, pe.it.w * 0.014) + "px";
+  m.appendChild(lb); m.title = it.stt + ". " + dName(it) + (mkEdit ? "\nKéo: di chuyển · kéo góc: đổi cỡ · ✕: xoá" : "");
+  if (!mkEdit) return m;
+  const hd = el("span", "wmh"), x = el("span", "wmx", "✕"); m.append(hd, x);
+  const commit = (fn) => { const doc = pe.it.doc, page = pe.it.page, list = boxesOn(it, doc, page).map((v) => v.slice()); fn(list); if (setRegion(it.id, doc, page, list)) { renderWbsMarks(); if (bdIt && bdIt.id === it.id) showPics(bdIt, true); } };
+  x.onpointerdown = (e) => { e.stopPropagation(); e.preventDefault(); commit((l) => l.splice(i, 1)); };
+  m.onpointerdown = (e) => {
+    if (e.target === x) return; e.stopPropagation(); e.preventDefault();
+    const R = pe.el.getBoundingClientRect(), sx = e.clientX, sy = e.clientY, rz = e.target === hd; let moved = false, nb = b.slice();
+    m.setPointerCapture(e.pointerId);
+    const mv = (ev) => {
+      const dx = (ev.clientX - sx) / R.width, dy = (ev.clientY - sy) / R.height; if (Math.abs(ev.clientX - sx) + Math.abs(ev.clientY - sy) > 3) moved = true;
+      nb = rz ? [b[0], b[1], Math.max(b[0] + 0.004, b[2] + dx), Math.max(b[1] + 0.004, b[3] + dy)] : [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy];
+      Object.assign(m.style, { left: nb[0] * 100 + "%", top: nb[1] * 100 + "%", width: (nb[2] - nb[0]) * 100 + "%", height: (nb[3] - nb[1]) * 100 + "%" });
+    };
+    const up = () => { m.removeEventListener("pointermove", mv); m.removeEventListener("pointerup", up); if (moved) commit((l) => { l[i] = nb; }); else openWbsItem(it.id, true); };
+    m.addEventListener("pointermove", mv); m.addEventListener("pointerup", up);
+  };
+  return m;
+}
+function setMk(on, edit) {
+  mkOn = on; mkEdit = on && edit; try { localStorage.setItem("pb_mkon", on ? "1" : "0"); } catch (e) {}
+  renderWbsMarks(); if (wbs && $("#wbsList").childElementCount) renderWbs();
+  if (mkEdit) status("Sửa ký hiệu: kéo để di chuyển, kéo góc để đổi cỡ, ✕ để xoá. Thêm: chọn hạng mục rồi bấm “＋ Khoanh” trên thanh bảng lớn.", 8000);
 }
 /* ----- bấm hạng mục: bảng lớn = phối cảnh · cửa sổ trên = layout · cửa sổ dưới = SPEC ----- */
 const isPersp = (d) => /phối cảnh|thực tế|perspective/i.test(d.label || "") || /phối cảnh/i.test(d.sub || "");
@@ -880,6 +933,7 @@ function boardGo() {
   const B = (t, tip, fn, dis) => { const b = el("button", null, t); b.title = tip; b.onclick = fn; b.disabled = !!dis; bar.appendChild(b); return b; };
   if (bdList.length > 1) { B("◀", "Trang trước", () => { bdK--; boardGo(); }, bdK === 0); bar.appendChild(el("small", null, bdK + 1 + "/" + bdList.length)); B("▶", "Trang sau", () => { bdK++; boardGo(); }, bdK === bdList.length - 1); }
   B("✎ Chọn lại vùng", "Phóng bảng tới trang cần xem rồi kéo khung chọn vùng", () => pickSlot(bdIt, "board"));
+  B("＋ Khoanh", "Thêm 1 vị trí khoanh cho hạng mục: kéo khung trên trang bất kỳ", () => { if (!me) return status("Đăng nhập để thêm khoanh", 3000); regionMode = { id: bdIt.id, add: true }; setTool("crop"); status("Kéo khung quanh vị trí cần khoanh cho “" + dName(bdIt) + "” (Esc để huỷ)", 6000); });
   if (vb || own) B("↺", "Trả về mặc định", () => { if (vb) setSlotView(bdIt.id, "board", null); if (own) setRegion(bdIt.id, d.doc, d.page, null); showPics(bdIt); });
   B("✕", "Ẩn thanh này", () => bar.classList.add("hidden"));
   bar.style.left = ($("#side").classList.contains("hidden") ? 0 : $("#side").offsetWidth) + 10 + "px";
@@ -1249,7 +1303,7 @@ function queueRender(p) {
 }
 
 /* ----- bố cục của ai ----- */
-function renderAnnotations() { renderNotes(); renderPins(); renderMarks(); renderShapes(); }
+function renderAnnotations() { renderNotes(); renderPins(); renderMarks(); renderShapes(); renderWbsMarks(); }
 function curL() { if (layoutOwner === "base") return null; const d = notes[layoutOwner]; return d && d.layout && d.layout.v === 2 ? normL(d.layout) : null; }
 function setLayoutOwner(o) {
   if (editMode && !(me && o === me.email)) setEditMode(false);
@@ -1927,6 +1981,12 @@ async function cropDone(d) {
   const it = n.it, cl = (v) => Math.max(0, Math.min(1, v));
   const r = [cl((Math.min(d.x0, d.x1) - it.x) / it.w), cl((Math.min(d.y0, d.y1) - it.y) / it.h), cl((Math.max(d.x0, d.x1) - it.x) / it.w), cl((Math.max(d.y0, d.y1) - it.y) / it.h)];
   if (r[2] - r[0] < 0.01 || r[3] - r[1] < 0.01) return status("Vùng cắt quá nhỏ", 2500);
+  if (regionMode && regionMode.add) { // thêm 1 vị trí khoanh cho hạng mục trên trang vừa kéo
+    const id = regionMode.id; setTool("select"); const f = allWbsItems().find((x) => x.it.id === id); if (!f) return;
+    const list = boxesOn(f.it, it.doc, it.page).map((v) => v.slice()); list.push(r);
+    if (setRegion(id, it.doc, it.page, list)) { renderWbsMarks(); if (bdIt && bdIt.id === id) showPics(bdIt, true); status("Đã thêm vị trí khoanh", 2500); }
+    return;
+  }
   if (regionMode) { // lấy vùng vào ô (bảng lớn / ô trên / ô dưới) của hạng mục
     const { id, slot } = regionMode; setTool("select");
     if (setSlotView(id, slot, { doc: it.doc, page: it.page, box: r.map((v) => Math.round(v * 1e4) / 1e4) })) { if (bdIt && bdIt.id === id) showPics(bdIt, slot !== "board"); status("Đã lấy vùng vào ô", 2500); }
