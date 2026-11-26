@@ -313,13 +313,26 @@ function updateImages() {
 /* ---------------- PDF gốc: vẽ lại nét khi phóng to ---------------- */
 const pdfDocs = new Map(), pdfFail = new Set();
 if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = "lib/pdf.worker.min.js?v=3";
+/* lưu file gốc PDF vào bộ nhớ trình duyệt (Cache API): lần sau mở không phải tải lại từ Drive */
+async function cachedBytes(path, onProg) {
+  const f = files.find((x) => x.path === path), ver = f ? (f.size || "") + "-" + (f.mt || "") : "";
+  const key = "https://pb.cache/f/" + encodeURIComponent(path) + "?v=" + encodeURIComponent(ver);
+  let C = null; try { C = ver && window.caches ? await caches.open("pb-files-v1") : null; } catch (e) {}
+  if (C) { try { const r = await C.match(key); if (r) return await r.arrayBuffer(); } catch (e) {} }
+  const buf = await src.pdfData(path, onProg);
+  if (C) try {
+    for (const k of await C.keys()) if (k.url.startsWith("https://pb.cache/f/" + encodeURIComponent(path) + "?")) await C.delete(k); // bỏ bản cũ của cùng file
+    await C.put(key, new Response(buf.slice(0)));
+  } catch (e) {}
+  return buf;
+}
 function getPdf(docId) {
   if (pdfDocs.has(docId)) { const e = pdfDocs.get(docId); pdfDocs.delete(docId); pdfDocs.set(docId, e); return e.promise; }
   const d = board.docs[docId];
   const promise = (async () => {
     status(`Đang tải file gốc: ${d.name} …`, 0);
     try {
-      const buf = await src.pdfData(d.path, (g, t) => status(`Đang tải file gốc: ${d.name} – ${Math.round(g / 1048576)}/${Math.round(t / 1048576)} MB`, 0));
+      const buf = await cachedBytes(d.path, (g, t) => status(`Đang tải file gốc: ${d.name} – ${Math.round(g / 1048576)}/${Math.round(t / 1048576)} MB`, 0));
       const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf), isEvalSupported: false }).promise;
       status("Đã tải xong: " + d.name, 1500);
       return pdf;
@@ -829,11 +842,17 @@ function setWbsInfo(on) {
 }
 /* ----- vùng khoanh do người dùng chọn lại (lưu theo hạng mục + trang, cả nhóm thấy) ----- */
 const rgKey = (doc, page) => doc + "#" + page;
+// wbs.docAlias: { idMới: idCũ } khi thay file nặng bằng bản nhẹ – vùng đã chỉnh trên file cũ vẫn dùng được
+const aliasOld = (doc) => (wbs && wbs.docAlias && wbs.docAlias[doc]) || null;
+const aliasNew = (doc) => { const a = wbs && wbs.docAlias; if (a) for (const [n, o] of Object.entries(a)) if (o === doc) return n; return null; };
 function regionOf(id, doc, page) { // vùng khoanh do người dùng chỉnh (bản chỉnh mới nhất của nhóm); null = dùng mặc định
-  const k = rgKey(doc, page); let best = null, bt = "";
+  const ks = [rgKey(doc, page)]; if (aliasOld(doc)) ks.push(rgKey(aliasOld(doc), page)); let best = null, bt = "";
   for (const [owner, d] of Object.entries(notes)) {
-    const r = d.wbs && d.wbs[id]; if (!r || !r.rg || r.rg[k] === undefined) continue;
-    const t = (r.rgts && r.rgts[k]) || ""; if (best === null || t > bt || (t === bt && me && owner === me.email)) { best = r.rg[k]; bt = t; }
+    const r = d.wbs && d.wbs[id]; if (!r || !r.rg) continue;
+    for (const k of ks) {
+      if (r.rg[k] === undefined) continue;
+      const t = (r.rgts && r.rgts[k]) || ""; if (best === null || t > bt || (t === bt && me && owner === me.email)) { best = r.rg[k]; bt = t; }
+    }
   }
   return best === null || best === "auto" ? null : best;
 }
@@ -849,7 +868,7 @@ function markIndex() {
   const idx = new Map(), add = (k, o) => { if (!idx.has(k)) idx.set(k, { tag: false, items: new Map() }); const e = idx.get(k); if (o.tag) e.tag = true; if (o.it && !e.items.has(o.it.id)) e.items.set(o.it.id, o.it); };
   for (const { it } of allWbsItems()) {
     for (const d of it.drawings || []) if (d.boxes) add(rgKey(d.doc, d.page), { it, tag: d.mk === "tag" || isPersp(d) });
-    for (const nd of Object.values(notes)) { const r = nd.wbs && nd.wbs[it.id]; if (r && r.rg) for (const k of Object.keys(r.rg)) add(k, { it }); }
+    for (const nd of Object.values(notes)) { const r = nd.wbs && nd.wbs[it.id]; if (r && r.rg) for (const k of Object.keys(r.rg)) { const [dd, pp] = k.split("#"), nn = aliasNew(dd); add(nn ? rgKey(nn, +pp) : k, { it }); } }
   }
   return idx;
 }
@@ -959,6 +978,26 @@ function boardGo() {
   goPage(d.doc, d.page, own || d.boxes, !d.crop);
 }
 function placePics() { const b = $("#wbsPics"); if (b) b.style.right = ($("#wbsd").classList.contains("hidden") ? 0 : $("#wbsd").offsetWidth) + 8 + "px"; }
+/* ảnh trang cho 2 ô hình: vẽ nhanh bản nhỏ trước, bản nét sau; giữ lại trong bộ nhớ để bấm hạng mục khác cùng trang hiện ngay */
+const winCache = new Map();
+function winPage(doc, page, px) {
+  const k = doc + "#" + page + "@" + px;
+  if (winCache.has(k)) { const e = winCache.get(k); winCache.delete(k); winCache.set(k, e); return e; }
+  if (px < 2000) for (const [kk, e] of winCache) if (kk.startsWith(doc + "#" + page + "@") ) return e; // đã có bản nét thì dùng luôn
+  const p = (async () => {
+    const pdf = await getPdf(doc), pg = await pdf.getPage(page), v0 = pg.getViewport({ scale: 1 });
+    const vp2 = pg.getViewport({ scale: Math.min(4, px / Math.max(v0.width, v0.height)) });
+    const cv = document.createElement("canvas"); cv.width = Math.floor(vp2.width); cv.height = Math.floor(vp2.height);
+    const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    await pg.render({ canvasContext: ctx, viewport: vp2 }).promise;
+    const blob = await new Promise((ok) => cv.toBlob(ok, "image/jpeg", 0.9)); const url = URL.createObjectURL(blob);
+    const img = new Image(); img.src = url; await img.decode();
+    return { url, w: cv.width, h: cv.height, get img() { const i = new Image(); i.src = url; return i; } };
+  })();
+  winCache.set(k, p); p.catch(() => winCache.delete(k));
+  while (winCache.size > 24) { const kk = winCache.keys().next().value; const e = winCache.get(kk); winCache.delete(kk); e.then((r) => URL.revokeObjectURL(r.url)).catch(() => {}); }
+  return p;
+}
 function picWin(slot, list, seq, it, emptyMsg) {
   const w = el("div", "pw"), h = el("div", "pwh"), body = el("div", "pwb"), inner = el("div", "pwi");
   let k = 0, v = { x: 0, y: 0, s: 1 }, natW = 1, natH = 1;
@@ -982,18 +1021,14 @@ function picWin(slot, list, seq, it, emptyMsg) {
     if (!list.length) { go.style.display = "none"; inner.innerHTML = ""; inner.style.transform = ""; inner.appendChild(el("div", "pwload wrap", emptyMsg)); return; }
     const d = cur(); t.textContent = k + 1 + "/" + list.length; prev.disabled = k === 0; next.disabled = k === list.length - 1;
     inner.innerHTML = ""; inner.style.transform = ""; inner.appendChild(el("div", "pwload", "Đang tải hình…"));
+    let upgrade = false;
     try {
       const doc = board.docs[d.doc]; let node;
       if (doc && doc.kind === "img") { const im = new Image(); im.src = cache.get(doc.path) || await src.blobUrl(doc.path); await im.decode(); node = im; natW = im.naturalWidth; natH = im.naturalHeight; }
-      else {
-        const pdf = await getPdf(d.doc), pg = await pdf.getPage(d.page), v0 = pg.getViewport({ scale: 1 });
-        const sc = Math.min(4, 3000 / Math.max(v0.width, v0.height)), vp2 = pg.getViewport({ scale: sc });
-        const cv = document.createElement("canvas"); cv.width = Math.floor(vp2.width); cv.height = Math.floor(vp2.height);
-        const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-        await pg.render({ canvasContext: ctx, viewport: vp2 }).promise; node = cv; natW = cv.width; natH = cv.height;
-      }
+      else { const r = await winPage(d.doc, d.page, 1100); node = r.img; natW = r.w; natH = r.h; upgrade = true; }
       if (seq !== picSeq) return;
       inner.innerHTML = ""; node.className = "pwimg"; inner.style.width = natW + "px"; inner.style.height = natH + "px"; inner.appendChild(node);
+      if (upgrade) winPage(d.doc, d.page, 2600).then((r) => { if (seq === picSeq && cur() === d && node.isConnected && node.src !== r.url) { const im = r.img; im.className = "pwimg"; node.replaceWith(im); node = im; } }).catch(() => {});
       const tg = d.mk === "tag" || isPersp(d), host = { el: inner, it: { doc: d.doc, page: d.page, w: natW, h: natH } };
       const pins = () => { inner.querySelectorAll(".wmk").forEach((x) => x.remove()); if (!d.crop) boxes().forEach((b, i) => inner.appendChild(markEl(it, host, b, i, tg))); };
       pins(); picRedraws.push(() => { if (inner.isConnected && cur() === d) pins(); });
@@ -1283,7 +1318,7 @@ function sheetRender(ws, name) {
 }
 async function loadSheets(s) {
   await loadXlsxLib();
-  const buf = await src.pdfData(s.path);
+  const buf = await cachedBytes(s.path);
   const wb = XLSX.read(new Uint8Array(buf), { type: "array", cellStyles: true });
   let m = $("#xm"); if (!m) { m = el("div"); m.id = "xm"; document.body.appendChild(m); }
   const out = [];
