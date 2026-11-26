@@ -853,6 +853,10 @@ function markIndex() {
   }
   return idx;
 }
+function pageMarks(doc, page) { // mọi vùng khoanh của mọi hạng mục trên 1 trang (để ô layout luôn hiện cùng một khung nhìn)
+  const E = markIndex().get(rgKey(doc, page)); if (!E) return [];
+  return [...E.items.values()].flatMap((it) => boxesOn(it, doc, page));
+}
 function boxesOn(it, doc, page) { const own = regionOf(it.id, doc, page); if (own) return own; const d = (it.drawings || []).find((x) => x.doc === doc && x.page === page && x.boxes); return d ? d.boxes : []; }
 function renderWbsMarks() {
   world.querySelectorAll(".wmk").forEach((e) => e.remove());
@@ -957,12 +961,12 @@ function picWin(slot, list, seq, it, emptyMsg) {
   rs.style.display = slotView(it.id, slot) ? "" : "none";
   const cur = () => list[k], boxes = () => { const d = cur(); return (!d.crop && regionOf(it.id, d.doc, d.page)) || d.boxes || []; };
   const ap = () => { inner.style.transform = `translate(${v.x}px,${v.y}px) scale(${v.s})`; inner.style.setProperty("--inv", (1 / v.s).toFixed(4)); };
-  const fitTo = (bx, tight) => {
+  const fitTo = (bx, tight, plan) => {
     const W = body.clientWidth || 400, H = body.clientHeight || 260;
     let x0 = 0, y0 = 0, x1 = 1, y1 = 1;
     if (bx && bx.length) { x0 = Math.min(...bx.map((b) => b[0])); y0 = Math.min(...bx.map((b) => b[1])); x1 = Math.max(...bx.map((b) => b[2])); y1 = Math.max(...bx.map((b) => b[3])); }
     let rw = (x1 - x0) * natW, rh = (y1 - y0) * natH;
-    if (tight) { rw *= 1.04; rh *= 1.04; } else { rw = Math.max(rw, natW * 0.22); rh = Math.max(rh, natH * 0.16); if (bx && bx.length) { rw *= 1.5; rh *= 1.5; } }
+    if (tight) { rw *= 1.04; rh *= 1.04; } else if (plan) { rw *= 1.12; rh *= 1.2; } else { rw = Math.max(rw, natW * 0.22); rh = Math.max(rh, natH * 0.16); if (bx && bx.length) { rw *= 1.5; rh *= 1.5; } }
     v.s = Math.min(W / rw, H / rh); v.x = W / 2 - ((x0 + x1) / 2) * natW * v.s; v.y = H / 2 - ((y0 + y1) / 2) * natH * v.s; ap();
   };
   const load = async () => {
@@ -985,7 +989,7 @@ function picWin(slot, list, seq, it, emptyMsg) {
       const tg = d.mk === "tag" || isPersp(d), host = { el: inner, it: { doc: d.doc, page: d.page, w: natW, h: natH } };
       const pins = () => { inner.querySelectorAll(".wmk").forEach((x) => x.remove()); if (!d.crop) boxes().forEach((b, i) => inner.appendChild(markEl(it, host, b, i, tg))); };
       pins(); picRedraws.push(() => { if (inner.isConnected && cur() === d) pins(); });
-      fitTo(d.crop || tg ? boxes() : null, d.crop); // layout: hiện cả trang để thấy hết các vòng khoanh
+      fitTo(d.crop || tg ? boxes() : pageMarks(d.doc, d.page), d.crop, !d.crop && !tg); // layout: luôn hiện cả vùng mặt bằng có ký hiệu
     } catch (e) { inner.innerHTML = ""; inner.appendChild(el("div", "pwload wrap", "Không tải được hình: " + (e.message || e))); }
   };
   prev.onclick = () => { if (k > 0) { k--; load(); } }; next.onclick = () => { if (k < list.length - 1) { k++; load(); } };
@@ -999,7 +1003,7 @@ function picWin(slot, list, seq, it, emptyMsg) {
     const mv = (ev) => { v.x = ev.clientX - sx; v.y = ev.clientY - sy; ap(); }, end = () => { body.removeEventListener("pointermove", mv); body.removeEventListener("pointerup", end); };
     body.addEventListener("pointermove", mv); body.addEventListener("pointerup", end);
   });
-  body.addEventListener("dblclick", (e) => { if (e.target.closest(".wmk")) return; const d = list[k]; if (d) fitTo(d.crop || d.mk === "tag" || isPersp(d) ? boxes() : null, d.crop); });
+  body.addEventListener("dblclick", (e) => { if (e.target.closest(".wmk")) return; const d = list[k]; if (!d) return; const tg = d.mk === "tag" || isPersp(d); fitTo(d.crop || tg ? boxes() : pageMarks(d.doc, d.page), d.crop, !d.crop && !tg); });
   setTimeout(load, 0); return w;
 }
 
