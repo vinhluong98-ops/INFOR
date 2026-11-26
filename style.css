@@ -366,3 +366,10 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:12px}
 #wbsList .wro{font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:5px 8px;margin:4px 6px}
 #wbsList .wadd2{margin:10px 8px;border:1px dashed #93c5fd;background:#f8fbff;color:#2563eb;border-radius:8px;padding:5px 12px;cursor:pointer;font-size:12px}
 body:has(#wv:not(.hidden)) #drawbar{display:none}
+#wv .pwi{will-change:transform}
+#wv .pwb.panning{cursor:grabbing}
+#wv .pwimg{-webkit-user-drag:none;user-select:none;pointer-events:none}
+#wv .pwb{user-select:none;-webkit-user-select:none}
+.wfr label{display:flex;align-items:center;gap:3px;font-size:12px;white-space:nowrap}
+.wfr .frn{flex:1;color:#2563eb;font-size:11px}
+#wbsList .wz,#wbsList .wp{cursor:pointer}
