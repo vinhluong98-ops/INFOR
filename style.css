@@ -281,12 +281,14 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 .wmk.tag{display:flex;align-items:center;justify-content:center}
 .wmk.tag .wml{transform:translateY(-10%);color:#e11d24;font-weight:900;font-family:Arial,sans-serif;line-height:1;white-space:nowrap;-webkit-text-stroke:.05em #fff;paint-order:stroke fill}
 .wmk.cur.circ{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.35)}
-.wmk.cur.tag .wml{color:#1d4ed8}
-.mkedit .wmk{pointer-events:auto;cursor:move}
+
+#world.mkedit .wmk,#wbsPics.mkedit .wmk{pointer-events:auto;cursor:move}
 .mkedit .wmk.tag{outline:calc(1px * var(--inv)) dashed rgba(225,29,36,.8)}
 .mkedit .wmk.circ .wml{display:block}
 .wmk .wmh,.wmk .wmx{display:none}
-.mkedit .wmk .wmh{display:block;position:absolute;right:calc(-4px * var(--inv));bottom:calc(-4px * var(--inv));width:calc(9px * var(--inv));height:calc(9px * var(--inv));background:#fff;border:calc(2px * var(--inv)) solid #2563eb;border-radius:2px;cursor:nwse-resize}
-.mkedit .wmk .wmx{display:block;position:absolute;right:calc(-6px * var(--inv));top:calc(-8px * var(--inv));font-size:calc(10px * var(--inv));line-height:calc(13px * var(--inv));width:calc(13px * var(--inv));height:calc(13px * var(--inv));text-align:center;background:#ef4444;color:#fff;border-radius:50%;cursor:pointer}
+.mkedit .wmk .wmh{display:block;position:absolute;right:calc(-11px * var(--inv));bottom:calc(-11px * var(--inv));width:calc(9px * var(--inv));height:calc(9px * var(--inv));background:#fff;border:calc(2px * var(--inv)) solid #2563eb;border-radius:2px;cursor:nwse-resize}
+.mkedit .wmk .wmx{display:block;position:absolute;right:calc(-15px * var(--inv));top:calc(-15px * var(--inv));font-size:calc(10px * var(--inv));line-height:calc(13px * var(--inv));width:calc(13px * var(--inv));height:calc(13px * var(--inv));text-align:center;background:#ef4444;color:#fff;border-radius:50%;cursor:pointer}
 #wbsFilter{position:sticky;top:0;z-index:2;background:#fff}
 #wbsBoardBar button.on{background:#2563eb;color:#fff;border-color:#2563eb}
+#wbsPics .wmk.cur.circ{border-color:#ef4444;box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+.wmk .wml{pointer-events:none}
