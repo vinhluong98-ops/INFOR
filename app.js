@@ -681,15 +681,19 @@ function renderWbs() {
   lb.append(cb, document.createTextNode(" Chỉ có cảnh báo"));
   const ib = el("button", "wbsInfoBtn" + (wbsInfoOn ? " on" : ""), "<>"); ib.title = "Ẩn / hiện bảng thông tin hạng mục"; ib.onclick = () => setWbsInfo(!wbsInfoOn);
   f.append(q, lb, ib); box.appendChild(f);
-  const nq = norm(wbsQ);
+  const nq = norm(wbsQ).trim(), isCode = /^[a-z]{0,2}\d{1,3}[a-z]?$/.test(nq);
+  // gõ ký hiệu (E2, 10…) thì khớp đúng ký hiệu; gõ chữ thì tìm trong tên, nhóm, mã code, mã SPEC
+  const hit = (it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || (isCode ? norm(String(it.stt)) === nq || norm(codeOf(it.id)) === nq : norm(it.stt + " " + codeOf(it.id) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
+  const filtering = !!nq || wbsOnlyWarn; let nHit = 0;
   for (const z of wbs.zones) {
+    if (filtering && !z.packages.some((p) => p.items.some(hit))) continue;
     const zh = el("div", "wz", z.title); zh.title = z.note || ""; box.appendChild(zh);
     for (const p of z.packages) {
-      const ph = el("div", "wp", p.title); ph.appendChild(el("small", null, (p.area_m2 ? p.area_m2 + " m² · " : "") + (p.items.length ? p.items.length + " hạng mục" : "chưa có hạng mục – điền dần"))); box.appendChild(ph);
-      let lastCat = null;
+      const n = p.items.filter(hit).length; if (filtering && !n) continue; nHit += n;
+      const ph = el("div", "wp", p.title); ph.appendChild(el("small", null, (p.area_m2 ? p.area_m2 + " m² · " : "") + (p.items.length ? (filtering ? n + "/" : "") + p.items.length + " hạng mục" : "chưa có hạng mục – điền dần"))); box.appendChild(ph);
       const byCat = {}; for (const it of p.items) (byCat[it.cat] = byCat[it.cat] || []).push(it);
       for (const [cat, its] of Object.entries(byCat)) {
-        const rows = its.filter((it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || norm(codeOf(it.id) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
+        const rows = its.filter(hit);
         if (!rows.length) continue;
         box.appendChild(el("div", "wc", cat));
         for (const it of rows) {
@@ -707,7 +711,7 @@ function renderWbs() {
         }
       }
     }
-    if (z.spec_unlinked && z.spec_unlinked.length) {
+    if (!filtering && z.spec_unlinked && z.spec_unlinked.length) {
       box.appendChild(el("div", "wc", "Có trong SPEC nhưng chưa thấy dòng BOQ"));
       for (const u of z.spec_unlinked) {
         const r = el("div", "wi"); r.appendChild(el("span", "n", "·")); r.appendChild(el("span", "t", u.code + " – " + u.desc + " (" + u.loc + ")")); r.appendChild(el("span", "q", "tr." + u.page));
@@ -715,6 +719,7 @@ function renderWbs() {
       }
     }
   }
+  if (filtering && !nHit) box.appendChild(el("div", "pwload wrap", "Không có hạng mục nào khớp “" + wbsQ + "”."));
 }
 async function goPage(doc, page, boxes, wide) {
   const pe = await revealPage(doc, page); if (!pe) return status("Không thấy trang này trên bảng", 3000);
