@@ -683,7 +683,7 @@ function renderWbs() {
   f.append(q, lb, ib); box.appendChild(f);
   const nq = norm(wbsQ).trim(), isCode = /^[a-z]{0,2}\d{1,3}[a-z]?$/.test(nq);
   // gõ ký hiệu (E2, 10…) thì khớp đúng ký hiệu; gõ chữ thì tìm trong tên, nhóm, mã code, mã SPEC
-  const hit = (it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || (isCode ? norm(String(it.stt)) === nq || norm(codeOf(it.id)) === nq : norm(it.stt + " " + codeOf(it.id) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
+  const hit = (it) => (!wbsOnlyWarn || it.warnings.length) && (!nq || (isCode ? norm(String(it.stt)) === nq || norm(codeOf(it.id)) === nq : norm(it.stt + " " + codeOf(it.id) + " " + dName(it) + " " + it.name + " " + it.cat + " " + it.specs.map((s) => s.code).join(" ")).includes(nq)));
   const filtering = !!nq || wbsOnlyWarn; let nHit = 0;
   for (const z of wbs.zones) {
     if (filtering && !z.packages.some((p) => p.items.some(hit))) continue;
@@ -703,10 +703,15 @@ function renderWbs() {
           ci.onclick = (e) => e.stopPropagation(); ci.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") ci.blur(); };
           ci.oninput = () => { const s2 = wbsState(it.id); s2.code = ci.value.trim(); touchSt(s2); queueSave(); };
           r.appendChild(ci);
-          const t = el("span", "t", it.name);
+          const D = dv(it), t = el("span", "t", D.name);
+          t.title = "Bấm đúp để sửa tên"; t.ondblclick = (e) => { e.stopPropagation(); inlineEdit(t, D.name, it.name, (v) => saveOv(it, { name: v.trim() || it.name }), () => saveOv(it, { name: it.name })); };
+          if (D.ov) { const b = el("span", "bdg ed", "✎"); b.title = "Đã sửa tay bởi " + D.ov.by + " · " + D.ov.ts.slice(0, 10) + "\nGốc: " + it.name + (it.qty != null || it.unit ? " · " + fmtQ(it.qty, it.unit) : ""); t.appendChild(b); }
           if (it.warnings.length) { const b = el("span", "bdg " + (it.matrix === "Central" ? "r" : "w"), "⚠" + it.warnings.length); t.appendChild(b); }
           if (wbsPeers(it.id).length) t.appendChild(el("span", "bdg ok", "✓"));
-          r.appendChild(t); r.appendChild(el("span", "q", it.qty != null ? it.qty.toLocaleString("vi-VN") + " " + it.unit : ""));
+          const qs = el("span", "q" + (fmtQ(D.qty, D.unit) ? "" : " empty"), fmtQ(D.qty, D.unit) || "＋ SL");
+          qs.title = "Bấm đúp để sửa số lượng và đơn vị (ví dụ: 12 chỗ)";
+          qs.ondblclick = (e) => { e.stopPropagation(); inlineEdit(qs, fmtQ(D.qty, D.unit), fmtQ(it.qty, it.unit) || "(trống)", (v) => saveOv(it, parseQ(v)), () => saveOv(it, { qty: it.qty, unit: it.unit })); };
+          r.appendChild(t); r.appendChild(qs);
           r.onclick = () => openWbsItem(it.id); box.appendChild(r);
         }
       }
@@ -742,8 +747,9 @@ function openWbsItem(id, noFocus) {
   document.querySelectorAll(".wi").forEach((e) => e.classList.toggle("cur", e.dataset.id === id));
   const st = me ? wbsState(id) : { chk: {}, links: {}, note: "" };
   const B = $("#wbsdBody"); B.innerHTML = ""; $("#wbsdTitle").textContent = z.title + " · " + p.title;
-  B.appendChild(el("h3", null, it.stt + ". " + it.name));
-  B.appendChild(el("div", "sub", it.cat + (it.qty != null ? " · " + it.qty.toLocaleString("vi-VN") + " " + it.unit : "") + " · BOQ NEM mục: " + it.boq_group));
+  const D0 = dv(it);
+  B.appendChild(el("h3", null, it.stt + ". " + D0.name));
+  B.appendChild(el("div", "sub", it.cat + (fmtQ(D0.qty, D0.unit) ? " · " + fmtQ(D0.qty, D0.unit) : "") + " · BOQ NEM mục: " + it.boq_group + (D0.ov ? " · ✎ sửa tay bởi " + D0.ov.by : "")));
   // phạm vi
   B.appendChild(el("h4", null, "Phạm vi"));
   const sc = el("div", "wbox" + (it.matrix === "NEM" ? "" : " err"));
@@ -1693,11 +1699,11 @@ function wbsChoose(title, onPick) {
     list.innerHTML = ""; const nq = norm(q.value); let c = 0;
     for (const { z, p, it } of allWbsItems()) {
       const cd = codeOf(it.id);
-      if (nq && !norm(cd + " " + it.stt + " " + it.name + " " + it.cat + " " + p.title).includes(nq)) continue;
+      if (nq && !norm(cd + " " + it.stt + " " + dName(it) + " " + it.cat + " " + p.title).includes(nq)) continue;
       if (++c > 80) break;
       const r = el("div", "mrow"); const b = el("b");
       if (cd) b.appendChild(el("span", "cdb", cd));
-      b.appendChild(document.createTextNode(it.stt + ". " + it.name));
+      b.appendChild(document.createTextNode(it.stt + ". " + dName(it)));
       r.append(b, el("small", null, z.title + " · " + p.title + " · " + it.cat));
       r.onclick = () => { closeModal(); onPick(it.id); }; list.appendChild(r);
     }
@@ -1745,6 +1751,46 @@ function mainBox(id, it) {
 
 /* ================= WBS: mã code · ghi chú + hình · cắt hình ================= */
 const touchSt = (st) => { st.by = me.name || me.email; st.at = new Date().toISOString().slice(0, 10); };
+/* ----- sửa tay tên / số lượng / đơn vị hạng mục (lưu trên Drive, bản sửa mới nhất của nhóm được dùng) ----- */
+function ovOf(it) {
+  let best = null, by = "";
+  for (const [owner, d] of Object.entries(notes)) { const r = d.wbs && d.wbs[it.id]; if (r && r.ov && (!best || r.ov.ts > best.ts)) { best = r.ov; by = d.author || owner; } }
+  return best && !best.reset ? Object.assign({ by }, best) : null;
+}
+function dv(it) { const o = ovOf(it); return { name: o && o.name != null ? o.name : it.name, qty: o && "qty" in o ? o.qty : it.qty, unit: o && o.unit != null ? o.unit : it.unit, ov: o }; }
+const dName = (it) => dv(it).name;
+const fmtQ = (q, u) => (q != null ? q.toLocaleString("vi-VN") + (u ? " " + u : "") : u || "");
+function saveOv(it, patch) {
+  if (!me) return status("Đăng nhập để sửa hạng mục", 3000);
+  const cur = dv(it), st = wbsState(it.id);
+  if (patch === null) st.ov = { reset: true, ts: new Date().toISOString() };
+  else {
+    const o = { name: cur.name, qty: cur.qty, unit: cur.unit, ...patch };
+    st.ov = { ts: new Date().toISOString() };
+    if (o.name !== it.name) st.ov.name = o.name;
+    if (o.qty !== it.qty) st.ov.qty = o.qty;
+    if (o.unit !== it.unit) st.ov.unit = o.unit;
+    if (Object.keys(st.ov).length === 1) st.ov = { reset: true, ts: st.ov.ts };
+  }
+  touchSt(st); queueSave(); renderWbs(); if (wbsCur === it.id) openWbsItem(it.id, true);
+}
+function parseQ(txt) { // "10 vị trí" → {qty:10, unit:"vị trí"}; "1.234,5 m2" → 1234.5
+  const m = String(txt).trim().match(/^([\d.,]+)?\s*(.*)$/); let q = null;
+  if (m[1]) { let t = m[1]; if (t.includes(",")) t = t.replace(/\./g, "").replace(",", "."); else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ""); q = parseFloat(t); if (isNaN(q)) q = null; }
+  return { qty: q, unit: m[2].trim() };
+}
+function inlineEdit(span, val, orig, onSave, onReset) {
+  if (!me) return status("Đăng nhập để sửa hạng mục", 3000);
+  const inp = el("input", "ied"); inp.value = val; inp.placeholder = orig; inp.title = "Enter: lưu · Esc: huỷ · Gốc: " + orig;
+  const rb = el("button", "iedr", "↺"); rb.title = "Trả về giá trị gốc: " + orig;
+  const wrap = el("span", "iedw"); wrap.append(inp, rb);
+  span.replaceWith(wrap); inp.focus(); inp.select();
+  let done = false; const fin = (fn) => { if (done) return; done = true; fn(); };
+  inp.onclick = (e) => e.stopPropagation(); wrap.onclick = (e) => e.stopPropagation();
+  inp.onkeydown = (e) => { e.stopPropagation(); if (e.key === "Enter") fin(() => onSave(inp.value)); if (e.key === "Escape") fin(() => renderWbs()); };
+  inp.onblur = () => setTimeout(() => fin(() => onSave(inp.value)), 150);
+  rb.onmousedown = (e) => { e.preventDefault(); fin(onReset); };
+}
 function codeOf(id) {
   const m = me && notes[me.email] && notes[me.email].wbs && notes[me.email].wbs[id];
   if (m && m.code != null) return m.code;
@@ -1815,7 +1861,7 @@ function openWbsNote(id) {
   const top = el("div", "wnh");
   const ci = el("input"); ci.placeholder = "Mã code"; ci.value = codeOf(id); ci.disabled = !me; ci.className = "cdin";
   ci.oninput = () => { st.code = ci.value.trim(); touchSt(st); queueSave(); }; ci.onchange = () => renderWbs();
-  const tt = el("div", "wnt"); tt.append(el("b", null, it.stt + ". " + it.name), el("small", null, z.title + " · " + p.title + " · " + it.cat));
+  const tt = el("div", "wnt"); tt.append(el("b", null, it.stt + ". " + dName(it)), el("small", null, z.title + " · " + p.title + " · " + it.cat));
   top.append(ci, tt); B.appendChild(top);
   const ta = el("textarea"); ta.placeholder = me ? "Ghi chú / tình trạng hạng mục… (có thể dán hình bằng Ctrl+V)" : "Đăng nhập để ghi chú"; ta.value = st.note || ""; ta.disabled = !me; ta.rows = 6;
   let tmr = 0; ta.oninput = () => { st.note = ta.value; touchSt(st); queueSave(); clearTimeout(tmr); tmr = setTimeout(renderWbs, 700); };

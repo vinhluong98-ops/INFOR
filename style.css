@@ -267,3 +267,9 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 #wbsPics .pwh{padding:3px 5px}
 #wbsBoardBar small{color:#64748b}
 #wbsBoardBar{padding:4px 6px}
+.wi .bdg.ed{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.wi .q.empty{color:#cbd5e1}
+.wi .iedw{flex:1;display:flex;gap:3px;min-width:0}
+.wi .q + .iedw,.wi .iedw:last-child{flex:0 0 110px}
+.wi input.ied{flex:1;min-width:0;font:inherit;padding:1px 5px;border:1px solid #2563eb;border-radius:5px;outline:none}
+.wi .iedr{border:1px solid #cbd5e1;background:#fff;border-radius:5px;font-size:11px;padding:0 5px;cursor:pointer}
