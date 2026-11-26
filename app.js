@@ -888,9 +888,10 @@ function markEl(it, pe, b, i, tag) {
   };
   return m;
 }
+function boardBarSync() { const b = [...$("#wbsBoardBar").querySelectorAll("button")].find((x) => x.textContent.includes("ký hiệu")); if (b) { b.textContent = mkEdit ? "✎ Đang sửa ký hiệu" : "✎ Sửa ký hiệu"; b.classList.toggle("on", mkEdit); } }
 function setMk(on, edit) {
   mkOn = on; mkEdit = on && edit; try { localStorage.setItem("pb_mkon", on ? "1" : "0"); } catch (e) {}
-  renderWbsMarks(); if (wbs && $("#wbsList").childElementCount) renderWbs();
+  renderWbsMarks(); if (wbs && $("#wbsList").childElementCount) renderWbs(); boardBarSync();
   if (mkEdit) status("Sửa ký hiệu: kéo để di chuyển, kéo góc để đổi cỡ, ✕ để xoá. Thêm: chọn hạng mục rồi bấm “＋ Khoanh” trên thanh bảng lớn.", 8000);
 }
 /* ----- bấm hạng mục: bảng lớn = phối cảnh · cửa sổ trên = layout · cửa sổ dưới = SPEC ----- */
@@ -934,6 +935,7 @@ function boardGo() {
   const B = (t, tip, fn, dis) => { const b = el("button", null, t); b.title = tip; b.onclick = fn; b.disabled = !!dis; bar.appendChild(b); return b; };
   if (bdList.length > 1) { B("◀", "Trang trước", () => { bdK--; boardGo(); }, bdK === 0); bar.appendChild(el("small", null, bdK + 1 + "/" + bdList.length)); B("▶", "Trang sau", () => { bdK++; boardGo(); }, bdK === bdList.length - 1); }
   B("✎ Chọn lại vùng", "Phóng bảng tới trang cần xem rồi kéo khung chọn vùng", () => pickSlot(bdIt, "board"));
+  const eb = B(mkEdit ? "✎ Đang sửa ký hiệu" : "✎ Sửa ký hiệu", "Bật/tắt chế độ sửa ký hiệu: kéo để di chuyển, kéo góc để phóng/thu, ✕ để xoá", () => { if (!me) return status("Đăng nhập để sửa ký hiệu", 3000); setMk(true, !mkEdit); boardBarSync(); }); eb.classList.toggle("on", mkEdit);
   B("＋ Khoanh", "Thêm 1 vị trí khoanh cho hạng mục: kéo khung trên trang bất kỳ", () => { if (!me) return status("Đăng nhập để thêm khoanh", 3000); regionMode = { id: bdIt.id, add: true }; setTool("crop"); status("Kéo khung quanh vị trí cần khoanh cho “" + dName(bdIt) + "” (Esc để huỷ)", 6000); });
   if (vb || own) B("↺", "Trả về mặc định", () => { if (vb) setSlotView(bdIt.id, "board", null); if (own) setRegion(bdIt.id, d.doc, d.page, null); showPics(bdIt); });
   B("✕", "Ẩn thanh này", () => bar.classList.add("hidden"));
