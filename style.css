@@ -292,3 +292,20 @@ body:has(#wbsd:not(.hidden)) #drawbar{right:calc(min(400px,31vw) + 12px)}
 #wbsBoardBar button.on{background:#2563eb;color:#fff;border-color:#2563eb}
 #wbsPics .wmk.cur.circ{border-color:#ef4444;box-shadow:0 0 0 1px rgba(255,255,255,.6)}
 .wmk .wml{pointer-events:none}
+
+/* thêm / xoá hạng mục WBS */
+.wp{position:relative}
+.wp .wadd{position:absolute;right:4px;top:6px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;font-size:11px;padding:1px 7px;cursor:pointer;color:#2563eb}
+.wp .wadd:hover{background:#eff6ff}
+.wi{position:relative}
+.wi .wdel{display:none;margin-left:4px;border:0;background:transparent;cursor:pointer;font-size:12px;opacity:.6}
+.wi:hover .wdel,.wi .wdel.on{display:inline-block}
+.wi .wdel:hover{opacity:1}
+.wi.del .t{color:#94a3b8;text-decoration:line-through}
+.wdh{font-size:11px;color:#64748b;padding:4px 10px;cursor:pointer}
+.wdh:hover{color:#2563eb}
+.waf{margin:4px 6px 8px;padding:8px;border:1px solid #bfdbfe;background:#f8fbff;border-radius:8px;display:flex;flex-direction:column;gap:6px}
+.waf .wafr{display:flex;gap:6px}
+.waf input{flex:1;min-width:0;font:inherit;font-size:12px;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px}
+.waf button{border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:12px}
+.waf button.pri{background:#2563eb;color:#fff;border-color:#2563eb}
