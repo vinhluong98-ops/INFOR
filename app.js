@@ -848,7 +848,7 @@ let mkOn = true, mkEdit = false; try { mkOn = localStorage.getItem("pb_mkon") !=
 function markIndex() {
   const idx = new Map(), add = (k, o) => { if (!idx.has(k)) idx.set(k, { tag: false, items: new Map() }); const e = idx.get(k); if (o.tag) e.tag = true; if (o.it && !e.items.has(o.it.id)) e.items.set(o.it.id, o.it); };
   for (const { it } of allWbsItems()) {
-    for (const d of it.drawings || []) if (d.boxes) add(rgKey(d.doc, d.page), { it, tag: d.mk === "tag" });
+    for (const d of it.drawings || []) if (d.boxes) add(rgKey(d.doc, d.page), { it, tag: d.mk === "tag" || isPersp(d) });
     for (const nd of Object.values(notes)) { const r = nd.wbs && nd.wbs[it.id]; if (r && r.rg) for (const k of Object.keys(r.rg)) add(k, { it }); }
   }
   return idx;
@@ -867,7 +867,8 @@ function renderWbsMarks() {
 function markEl(it, pe, b, i, tag) {
   const m = el("div", "wmk " + (tag ? "tag" : "circ") + (wbsCur === it.id ? " cur" : "")); m.dataset.id = it.id;
   Object.assign(m.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
-  const lb = el("span", "wml", String(it.stt)); if (tag) lb.style.fontSize = Math.max(6, pe.it.w * 0.032) + "px"; else lb.style.fontSize = Math.max(4, pe.it.w * 0.014) + "px";
+  // phối cảnh: chỉ hiện số note, cỡ chữ theo khung (kéo góc để phóng to / thu nhỏ); layout: vòng khoanh
+  const lb = el("span", "wml", String(it.stt)); lb.style.fontSize = tag ? Math.max(4, (b[3] - b[1]) * pe.it.h * 0.8) + "px" : Math.max(4, pe.it.w * 0.014) + "px";
   m.appendChild(lb); m.title = it.stt + ". " + dName(it) + (mkEdit ? "\nKéo: di chuyển · kéo góc: đổi cỡ · ✕: xoá" : "");
   if (!mkEdit) return m;
   const hd = el("span", "wmh"), x = el("span", "wmx", "✕"); m.append(hd, x);
@@ -975,7 +976,11 @@ function picWin(slot, list, seq, it, emptyMsg) {
       }
       if (seq !== picSeq) return;
       inner.innerHTML = ""; node.className = "pwimg"; inner.style.width = natW + "px"; inner.style.height = natH + "px"; inner.appendChild(node);
-      if (!d.crop) for (const b of boxes()) { const c = el("div", "hl loc"); Object.assign(c.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" }); inner.appendChild(c); }
+      if (!d.crop) for (const b of boxes()) {
+        const tg = d.mk === "tag" || isPersp(d), c = el("div", tg ? "wmk tag" : "hl loc"); Object.assign(c.style, { left: b[0] * 100 + "%", top: b[1] * 100 + "%", width: (b[2] - b[0]) * 100 + "%", height: (b[3] - b[1]) * 100 + "%" });
+        if (tg) { const t = el("span", "wml", String(it.stt)); t.style.fontSize = (b[3] - b[1]) * natH * 0.8 + "px"; c.appendChild(t); }
+        inner.appendChild(c);
+      }
       fitTo(boxes(), d.crop);
     } catch (e) { inner.innerHTML = ""; inner.appendChild(el("div", "pwload wrap", "Không tải được hình: " + (e.message || e))); }
   };
